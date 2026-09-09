@@ -68,6 +68,15 @@ Assess 4 criteria:
 3. Lexical Resource
 4. Grammatical Range and Accuracy
 
+Spelling rules (mandatory):
+- Spelling accuracy is scored as part of Lexical Resource, per the official descriptors ("errors in spelling and/or word formation"). Every misspelled word must lower Lexical Resource proportionally to its frequency and severity.
+- List EVERY misspelled word in "inlineCorrections" using the exact original fragment, the corrected spelling, and an explanation that begins with "Spelling:".
+- Do not invent errors; quote the student's text exactly as written.
+
+Output rules (mandatory):
+- All feedback, corrections and explanations MUST be written in polished, correctly spelled, grammatically clean English. Never include spelling or grammar mistakes in your own output text.
+- Keep each criterionFeedback to 2-3 sentences, specific to this essay, quoting the student's exact words where relevant.
+
 Calculate overall band score: (TR + CC + LR + GRA) / 4 rounded to nearest 0.5.
 Calculate self-assessed confidence score between 0.00 and 1.00 based on certainty of rubric application.
 
@@ -90,7 +99,7 @@ Return strictly JSON matching this structure:
     {
       "originalText": "exact sentence fragment from essay",
       "correctedText": "refined academic phrasing",
-      "explanation": "grammatical or lexical rationale"
+      "explanation": "grammatical, lexical or spelling rationale"
     }
   ]
 }`;
