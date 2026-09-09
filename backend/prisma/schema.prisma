@@ -1,0 +1,231 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  STUDENT
+  INSTRUCTOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum SkillType {
+  LISTENING
+  READING
+  WRITING
+  SPEAKING
+  FULL_MOCK
+}
+
+enum ModuleType {
+  ACADEMIC
+  GENERAL
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  SCORING
+  NEEDS_REVIEW
+  COMPLETED
+}
+
+enum AgentRunStatus {
+  QUEUED
+  RUNNING
+  WAITING_FOR_APPROVAL
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id                     String            @id @default(uuid())
+  email                  String            @unique
+  passwordHash           String
+  name                   String
+  role                   Role              @default(STUDENT)
+  targetBand             Float?
+  examDate               DateTime?
+  moduleType             ModuleType        @default(ACADEMIC)
+  subscriptionTier       String            @default("free")
+  dailyCommitmentMinutes Int?
+  weakestSkill           SkillType?
+  studyPlanJson          Json?
+  attempts               Attempt[]
+  certificates           Certificate[]
+  reviewsConducted       ReviewQueueItem[]
+  vocabularyItems        VocabularyItem[]
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  @@map("users")
+}
+
+model VocabularyItem {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  word            String
+  phonetic        String?
+  partOfSpeech    String
+  definition      String   @db.Text
+  bandTarget      Float
+  topic           String
+  collocations    Json
+  synonyms        Json
+  exampleSentence String   @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@map("vocabulary_items")
+}
+
+model TestSet {
+  id               String       @id @default(uuid())
+  title            String
+  skill            SkillType
+  moduleType       ModuleType   @default(ACADEMIC)
+  timeLimitMinutes Int
+  isMock           Boolean      @default(false)
+  createdById      String?
+  questions        Question[]
+  attempts         Attempt[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([skill, createdAt(sort: Desc)])
+  @@map("test_sets")
+}
+
+model Question {
+  id           String    @id @default(uuid())
+  testSetId    String
+  testSet      TestSet   @relation(fields: [testSetId], references: [id], onDelete: Cascade)
+  partNumber   Int       @default(1)
+  questionType String    // MCQ, MATCHING, COMPLETION, ESSAY, SPEAKING_PROMPT
+  prompt       String    @db.Text
+  passage      String?   @db.Text
+  audioUrl     String?
+  metadata     Json?     // Options, correct answers for auto-grading
+  orderIndex   Int       @default(0)
+  createdAt    DateTime  @default(now())
+
+  @@index([testSetId, orderIndex])
+  @@map("questions")
+}
+
+model Attempt {
+  id                   String        @id @default(uuid())
+  userId               String
+  user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  testSetId            String
+  testSet              TestSet       @relation(fields: [testSetId], references: [id], onDelete: Cascade)
+  status               AttemptStatus @default(IN_PROGRESS)
+  answersJson          Json?         // Keyed by questionId
+  timeRemainingSeconds Int?
+  startedAt            DateTime      @default(now())
+  submittedAt          DateTime?
+  scores               Score[]
+  reviewQueueItem      ReviewQueueItem?
+  agentRuns            AgentRun[]
+
+  @@index([userId, startedAt(sort: Desc)])
+  @@index([userId, testSetId, status])
+  @@map("attempts")
+}
+
+model Score {
+  id                   String    @id @default(uuid())
+  attemptId            String
+  attempt              Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  skill                SkillType
+  bandScore            Float     // 0.0 to 9.0
+  taskAchievement      Float?
+  coherenceCohesion    Float?
+  lexicalResource      Float?
+  grammaticalAccuracy  Float?
+  fluencyCoherence     Float?
+  pronunciation        Float?
+  feedbackSummary      String?   @db.Text
+  inlineFeedbackJson   Json?
+  scoredBy             String    @default("AI_GLM")
+  confidence           Float?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([attemptId, skill])
+  @@map("scores")
+}
+
+model Certificate {
+  id                String    @id @default(uuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  certificateNumber String    @unique
+  overallBand       Float
+  verificationCode  String    @unique
+  status            String    @default("ACTIVE")
+  issuedAt          DateTime  @default(now())
+  revokedAt         DateTime?
+  revocationReason  String?
+
+  @@map("certificates")
+}
+
+model AgentRun {
+  id                String         @id @default(uuid())
+  agentType         String         // WRITING_SCORING, SPEAKING_SCORING, REVIEW_TRIAGE, COACH
+  attemptId         String?
+  attempt           Attempt?       @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  status            AgentRunStatus @default(QUEUED)
+  confidence        Float?
+  inputPayloadJson  Json?
+  outputPayloadJson Json?
+  costTokens        Int            @default(0)
+  durationMs        Int            @default(0)
+  error             String?        @db.Text
+  steps             AgentStep[]
+  createdAt         DateTime       @default(now())
+  completedAt       DateTime?
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("agent_runs")
+}
+
+model AgentStep {
+  id             String    @id @default(uuid())
+  agentRunId     String
+  agentRun       AgentRun  @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  stepName       String
+  status         String
+  toolName       String?
+  toolInputJson  Json?
+  toolOutputJson Json?
+  durationMs     Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  @@map("agent_steps")
+}
+
+model ReviewQueueItem {
+  id              String    @id @default(uuid())
+  attemptId       String    @unique
+  attempt         Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  skill           SkillType
+  status          String @default("PENDING") // PENDING, APPROVED, OVERRIDDEN
+  proposedBand    Float?
+  finalBand       Float?
+  instructorNotes String?   @db.Text
+  reviewedById    String?
+  reviewedBy      User?     @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+  reviewedAt      DateTime?
+
+  @@map("review_queue_items")
+}

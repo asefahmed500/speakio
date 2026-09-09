@@ -1,0 +1,392 @@
+# IELTS Prep — Product Requirements Document (PRD)
+
+**Version:** 1.2 (Web-First Edition)
+**Platforms:** Web (Next.js) + Backend (NestJS) — mobile app (React Native) planned as a later phase, sharing the same API/data model
+**Author:** Asef Ahmed
+**Status:** Draft for build
+
+---
+
+## 1. Product Summary
+
+IELTS Prep is a role-based web platform for complete IELTS exam preparation — Listening, Reading, Writing, Speaking — with mock tests, AI-assisted band scoring, progress analytics, and a downloadable/verifiable **Participation Certificate** on course/mock-test-series completion. v1 ships as a fully responsive web app (desktop + mobile browser); a native mobile app is a planned Phase 2 that reuses the same NestJS backend and data model.
+
+The platform is built **agent-native**: instead of hand-wiring individual AI calls per feature, every AI-driven operation (scoring, content generation, review triage, coaching, notifications, certificate issuance) runs as a job through a shared **Agent Orchestration Layer** (DAG-based, on Node/BullMQ/Postgres/Claude). This means new AI capability is added by registering a new agent + config, not by rebuilding pipelines — and admins get one operations dashboard to monitor, retry, and control every AI action platform-wide instead of scattered logs per feature.
+
+### 1.1 Goals
+- Give a learner everything needed to prepare for IELTS (Academic + General Training) in one product.
+- Simulate real exam conditions (timed sections, real test-day UI) for Listening/Reading/Writing; structured practice + recording for Speaking.
+- Use AI to auto-band Writing and Speaking, with human/admin override.
+- Let admins manage question banks, mock test sets, users, and certificate issuance without touching code.
+- Issue a verifiable participation certificate (PDF + shareable link + QR verification) on completion of a defined milestone (e.g., a full mock test, or a course module).
+
+### 1.2 Non-Goals (v1)
+- Live 1:1 tutoring / video classes (future module).
+- Payment/subscription billing is stubbed as a role/flag, not a full payment gateway integration (can be phase 2).
+- Full human-proctored exam simulation (webcam proctoring) — out of scope v1.
+
+---
+
+## 2. Roles & Permissions
+
+| Role | Description |
+|---|---|
+| **Super Admin** | Full system access: manage admins, global settings, question bank, certificate templates, all users. |
+| **Admin / Content Manager** | Create/edit mock tests, question sets, reading/listening/writing/speaking content, review flagged AI scores, issue/revoke certificates. |
+| **Instructor (optional role)** | Reviews Writing/Speaking submissions, overrides AI band score, leaves feedback. |
+| **Student (User)** | Takes mock tests/practice, views progress, receives certificate, manages profile/subscription. |
+| **Guest** | Limited access — can view landing page, sample questions, pricing; must register to attempt tests. |
+
+Role-based access is enforced via JWT claims + NestJS Guards (`RolesGuard`) on every endpoint, and route-level guards in Next.js middleware. The same guard/permission model will extend to a mobile client (navigation guard + context) when that phase begins.
+
+---
+
+## 3. Core Modules & Features
+
+### 3.1 Authentication & Onboarding
+- Email/password + Google/Apple OAuth.
+- Email verification (OTP or magic link).
+- Forgot/reset password.
+- Onboarding wizard: target band score, exam date, module (Academic/General), current level (self-assessed or diagnostic quiz).
+- Role assignment: default `student`; admins created via seed/invite only.
+
+### 3.2 Dashboard (Student)
+- Overall band prediction (average of latest section scores).
+- Section-wise progress rings: Listening / Reading / Writing / Speaking.
+- Study streak, daily goal tracker.
+- Upcoming: recommended next test/lesson based on weakest section.
+- Certificate status widget ("2 of 4 milestones complete").
+
+### 3.3 Listening Module
+- Full mock tests (4 sections, audio player, real exam timer ~30 min + 10 min transfer).
+- Question types: MCQ, matching, form/note/table completion, map labeling, sentence completion.
+- Auto-graded on submit; instant band-equivalent score + answer review with audio timestamp replay.
+
+### 3.4 Reading Module
+- Academic & General Training passage sets (3 passages, 60 min timer).
+- Question types: TFNG/YNNG, matching headings, MCQ, summary completion, matching information.
+- Auto-graded; review mode highlights passage evidence for each answer.
+
+### 3.5 Writing Module
+- Task 1 (Academic: chart/graph/process/map; General: letter) + Task 2 (essay).
+- Rich text editor with live word count + timer (20/40 min).
+- **AI scoring**, run by the **Writing Scoring Agent** (via Claude API), against the 4 official criteria: Task Achievement/Response, Coherence & Cohesion, Lexical Resource, Grammatical Range & Accuracy — returns band per criterion + overall + inline improvement comments + a confidence score.
+- Low-confidence results are auto-routed by the agent orchestrator to the human review queue (no manual triage needed); high-confidence results publish straight to the student.
+- Optional instructor review queue to confirm/override AI band.
+
+### 3.6 Speaking Module
+- Part 1/2/3 structured prompts with cue cards.
+- In-browser audio recording via the MediaRecorder API (works on desktop and mobile browsers, no app install needed).
+- AI transcription + band scoring (Fluency & Coherence, Lexical Resource, Grammatical Range, Pronunciation), run as a 2-step agent chain: **Transcription Agent** (STT) → **Speaking Scoring Agent** (Claude API), coordinated by the orchestrator so a failed step auto-retries without losing the recording.
+- Playback with band feedback overlay; instructor override supported.
+
+### 3.7 Practice Bank (non-timed)
+- Topic-wise and difficulty-wise question drilling for all 4 skills.
+- Bookmark/flag questions, personal notes.
+- Vocabulary builder: word lists tied to reading/listening passages, spaced-repetition flashcards.
+
+### 3.8 Mock Test Engine (generic, config-driven)
+- Admin composes a "Test Set" from the question bank (pick sections, time limits, question order).
+- Same engine powers Listening/Reading/Writing exactly as real IELTS test-day structure; supports a **Full Mock Test** (all 4 skills back-to-back) and **Section-only** mocks.
+- Auto-calculates overall band score (average of 4, IELTS rounding rules).
+
+### 3.9 Certificates
+- **Participation Certificate** auto-generated on: completing N full mock tests (config, default 1) OR a defined course/module.
+- Certificate contains: learner name, date, overall band achieved, unique certificate ID, QR code.
+- PDF generation (server-side, templated, admin-editable template/branding).
+- Public verification page: `/verify/:certificateId` — anyone can confirm authenticity without login.
+- Student can download PDF, get a shareable link, or push to LinkedIn.
+- Admin can view/revoke/reissue certificates.
+
+### 3.10 AI Agent Platform Layer (cross-cutting)
+
+Every AI-driven operation in the product is a registered **Agent** running through one shared orchestrator, not a one-off API call buried in a feature. This is what makes the platform "fully operable" — one place to see, monitor, retry, and extend every automated action.
+
+**Core agents (v1):**
+
+| Agent | Trigger | Job |
+|---|---|---|
+| **Writing Scoring Agent** | Writing submission | Bands the essay against the 4 IELTS criteria, returns confidence + feedback |
+| **Speaking Scoring Agent** | Recording submitted + transcribed | Bands speaking against the 4 criteria |
+| **Transcription Agent** | Speaking recording uploaded | STT → clean transcript, feeds Speaking Scoring Agent |
+| **Content Generation Agent** | Admin requests "generate draft set" | Drafts new Reading passages/questions, Listening scripts, Writing/Speaking prompts from a topic + difficulty spec, for admin to review/edit/publish (never auto-publishes) |
+| **Review Triage Agent** | Any AI score returned | Routes low-confidence or rubric-edge-case scores to the human review queue; auto-publishes high-confidence ones |
+| **Coach Agent** | Nightly / on-demand per student | Reads a student's attempt history, produces the "recommended next action" + personalized weak-area practice set on the dashboard |
+| **Certificate Agent** | Milestone met | Generates the PDF, QR code, verification record; notifies the student |
+| **Notification Agent** | Various (score ready, streak, exam-date countdown) | Composes and dispatches push/email copy per event, personalized to the student |
+| **Ops/Support Agent** (admin-facing) | Admin query in Admin panel | Natural-language ops queries — "which questions have the highest miss rate this month," "list students who stalled mid-mock this week" — answered by querying the platform data via tool calls, no SQL needed |
+
+**How it works:**
+- Each agent = a config (prompt/rubric, input schema, output schema, retry policy, confidence threshold) + a DAG node. Orchestrator (Node/BullMQ/Postgres/Claude) runs agents as background jobs, in parallel where independent (e.g., Writing + Speaking scoring for a full mock run concurrently) and in sequence where dependent (Transcription → Speaking Scoring).
+- **Human-in-the-loop by default** for anything that reaches a student's grade or gets published as content — agents draft/score/suggest, admins/instructors approve or the confidence gate auto-publishes.
+- Every agent run is logged: input, output, confidence, duration, retries, cost — visible in the Admin Agent Ops Dashboard (§3.11).
+- Adding a new AI capability later (e.g., an "Interview Simulation Agent") means registering a new node in the same framework — no new pipeline, no new infra.
+- This layer reuses the same generic agent-orchestration architecture already used across other products (Node/BullMQ/Postgres/Claude), so it's a known, provable pattern rather than a new build.
+
+### 3.11 Analytics & Reporting
+- Student: band trend chart over time, section strength/weakness radar chart, time spent per module.
+- Admin: platform-wide usage, test attempt volume, average bands, drop-off points, content performance (which questions are most missed), certificate issuance log.
+
+### 3.12 Admin Panel
+- **Agent Ops Dashboard** — live view of every agent run (queued/running/done/failed), per-agent success rate, avg confidence, avg cost/latency, one-click retry or manual override on any failed/low-confidence run. This is the single control surface for "is the AI actually working" across the whole product.
+- User management (search, view profile, role change, suspend/delete, impersonate-for-support).
+- Content management: CRUD for passages, audio files, question sets, writing/speaking prompts, test sets; "Generate draft with AI" button (invokes Content Generation Agent) on every content type.
+- Certificate template management.
+- Review queue for AI-scored Writing/Speaking flagged as low-confidence (fed by the Review Triage Agent).
+- Ops/Support Agent chat panel for natural-language platform queries.
+- Global settings: band-rounding rules, certificate issuance rules, feature flags, per-agent confidence thresholds and retry policy.
+- Audit log of all admin and agent actions.
+
+### 3.13 Notifications
+- Browser push + email, composed by the Notification Agent: test reminders, streak reminders, exam-date countdown, certificate ready, instructor feedback ready.
+- In-app notification center.
+
+### 3.14 Subscription / Access Tiers (stubbed for v1, real gateway in v2)
+- Free tier: limited practice questions, 1 mock test/month.
+- Premium: unlimited mocks, AI Writing/Speaking scoring, certificate eligibility.
+- Admin can manually grant/override tier per user (for v1 without live payments).
+
+---
+
+## 4. System Architecture
+
+```
+┌────────────────────────────┐
+│      Next.js (Web)          │
+│  - Student portal (desktop  │
+│    + responsive mobile web) │
+│  - Admin panel               │
+└──────────────┬──────────────┘
+               │        REST/GraphQL (JWT)
+               │
+                 ┌───────▼────────┐
+                 │   NestJS API    │
+                 │ - Auth (JWT)    │
+                 │ - Users/Roles   │
+                 │ - Test Engine   │
+                 │ - Content CMS   │
+                 │ - Certificates  │
+                 └───────┬────────┘
+                         │
+                 ┌───────▼─────────────────────┐
+                 │   Agent Orchestration Layer   │
+                 │   (DAG engine on BullMQ)       │
+                 │  ┌─────────┐ ┌──────────────┐ │
+                 │  │ Writing  │ │ Speaking      │ │
+                 │  │ Scoring  │ │ Scoring+STT   │ │
+                 │  │ Agent    │ │ Agent chain   │ │
+                 │  └─────────┘ └──────────────┘ │
+                 │  ┌─────────┐ ┌──────────────┐ │
+                 │  │ Content  │ │ Review        │ │
+                 │  │ Gen Agent│ │ Triage Agent  │ │
+                 │  └─────────┘ └──────────────┘ │
+                 │  ┌─────────┐ ┌──────────────┐ │
+                 │  │ Coach    │ │ Certificate   │ │
+                 │  │ Agent    │ │ Agent         │ │
+                 │  └─────────┘ └──────────────┘ │
+                 │  ┌─────────┐ ┌──────────────┐ │
+                 │  │Notification│ Ops/Support  │ │
+                 │  │ Agent    │ │ Agent         │ │
+                 │  └─────────┘ └──────────────┘ │
+                 │  Agent run log → Admin Ops UI  │
+                 └───────┬─────────────────────┘
+        ┌────────────────┼────────────────┬───────────────┐
+        ▼                ▼                ▼               ▼
+  ┌───────────┐   ┌─────────────┐  ┌─────────────┐  ┌───────────┐
+  │ PostgreSQL │   │ Redis/BullMQ │  │ Claude API   │  │ S3/Storage │
+  │ (Prisma)   │   │ (jobs/queue) │  │ + STT vendor │  │ (audio/PDF)│
+  └───────────┘   └─────────────┘  └─────────────┘  └───────────┘
+```
+
+- **Backend:** NestJS, Prisma + PostgreSQL, Redis + BullMQ for async jobs, S3-compatible storage for audio uploads and generated certificate PDFs.
+- **Agent Orchestration Layer:** a DAG-based engine (Node/BullMQ/Postgres/Claude) sitting behind the NestJS API. Every AI action in the product — scoring, content drafting, review triage, coaching recommendations, certificate generation, notification copy, admin ops queries — runs as a config-registered agent job through this one layer, with shared logging, retries, confidence gating, and cost tracking. This is the same generic agent-orchestration pattern used elsewhere, reapplied here rather than rebuilt per feature.
+- **Web:** Next.js (App Router), TypeScript, fully responsive (desktop + mobile browser) — this is the entire v1 client surface, including test-taking, admin, and public/verify pages, SSR for public/marketing + verify pages, CSR for authenticated app.
+- **Mobile (Phase 2, not in v1 scope):** React Native (Expo) app consuming the same NestJS API and shared types package once the web platform is stable.
+- **AI:** Anthropic Claude API powers every agent; a speech-to-text vendor feeds the Transcription Agent.
+- **Auth:** JWT access + refresh tokens, role claims, NestJS Guards; same auth service ready to be consumed by a future mobile client without backend changes.
+
+---
+
+## 5. Data Model (Core Entities)
+
+- **User** — id, name, email, passwordHash, role, targetBand, examDate, moduleType (Academic/General), subscriptionTier, createdAt
+- **TestSet** — id, title, type (Listening/Reading/Writing/Speaking/Full), timeLimit, isMock, createdBy
+- **Question** — id, testSetId, skill, type, content(json), correctAnswer(json), audioUrl/imageUrl, difficulty
+- **Attempt** — id, userId, testSetId, startedAt, submittedAt, status, rawAnswers(json)
+- **Score** — id, attemptId, skill, criteriaBreakdown(json), bandScore, scoredBy (AI/instructor), confidence
+- **Certificate** — id, userId, certificateNumber, overallBand, issuedAt, status (active/revoked), templateId
+- **VocabularyItem / Flashcard** — id, word, definition, sourcePassageId, userId (for saved words)
+- **Notification** — id, userId, type, payload, readAt
+- **AgentRun** — id, agentType, triggerType, inputRef, status (queued/running/done/failed), output(json), confidence, retryCount, costTokens, durationMs, startedAt, completedAt
+- **AuditLog** — id, actorId, action, targetType, targetId, timestamp
+
+---
+
+## 6. User Flows
+
+### 6.1 Student — First-Time Flow
+1. Land on marketing page → Sign up (email or OAuth).
+2. Verify email → Onboarding wizard (target band, exam date, module type, diagnostic quiz).
+3. Land on Dashboard with personalized recommendation.
+4. Take first practice question or full mock test.
+5. View instant results (Listening/Reading) or "scoring in progress" (Writing/Speaking, async AI job).
+6. Get notified when AI score is ready → review feedback.
+7. Repeat across skills → hit certificate milestone → certificate auto-generated → notified → download/share.
+
+### 6.2 Student — Full Mock Test Flow
+1. Dashboard → "Start Full Mock Test."
+2. Instructions screen (exam rules, timer info) → Consent/Start.
+3. Listening section (timed, audio, auto-advance) → Reading section (timed) → short break screen → Writing Task 1 & 2 (timed, editor) → Speaking (recorded, part 1/2/3 prompts, timed per part).
+4. Submit → Listening/Reading scored instantly; Writing/Speaking queued for AI scoring (BullMQ job).
+5. Results dashboard updates as each section completes scoring; overall band computed once all 4 are in.
+6. If milestone met → Certificate generation triggered.
+
+### 6.3 Admin — Content Creation Flow
+1. Login → Admin panel.
+2. Content → New Test Set → choose skill/type → add questions (bulk import or manual builder) → attach audio/images → set correct answers/rubric → publish.
+3. Optionally assign to a "Course" or "Certificate Milestone."
+
+### 6.4 Admin — Review & Certificate Flow
+1. Review queue shows AI-scored Writing/Speaking below confidence threshold.
+2. Admin/instructor listens/reads submission, adjusts band + leaves comment → saves → student notified.
+3. Certificates tab → filter by pending/issued/revoked → manually issue, revoke, or reissue with reason (audit-logged).
+
+### 6.5 Public — Certificate Verification Flow
+1. Anyone opens `/verify/:certificateId` (from PDF QR code or shared link).
+2. System shows: learner name (partial/masked per privacy setting), band, issue date, status (valid/revoked) — no login required.
+
+---
+
+## 7. UI/UX — Screen Inventory
+
+### 7.1 Web (Next.js) — Public
+- Landing / Marketing page
+- Pricing page
+- Login / Register / Forgot Password
+- Certificate Verification page (`/verify/:id`)
+
+### 7.2 Web App — Student (responsive: desktop + mobile browser)
+- Onboarding wizard (multi-step)
+- Dashboard (progress rings, streak, recommended action)
+- Skill Hub (Listening / Reading / Writing / Speaking landing tabs)
+- Test Instructions screen
+- Test-Taking screens (per skill: audio player UI, passage+questions split view, writing editor, speaking recorder with cue card)
+- Section Break / Transition screen
+- Results & Review screen (per section + overall band)
+- AI Feedback detail view (criteria breakdown, inline comments)
+- Practice Bank (filterable question list, bookmark toggle)
+- Vocabulary / Flashcard deck (spaced repetition swipe UI)
+- Progress & Analytics (charts: band trend, radar, time-on-task)
+- Certificates screen (list, download, share)
+- Notifications center
+- Profile & Settings (target band, exam date, subscription, account)
+
+### 7.3 Admin Panel (Web only)
+- Admin Dashboard (platform KPIs)
+- **Agent Ops Dashboard** (per-agent run list, status/confidence/cost/latency, retry/override actions, filters by agent type and date)
+- **Ops/Support Agent chat panel** (natural-language platform queries)
+- User Management (table, filters, detail drawer, role editor)
+- Content Manager (Test Sets list → builder screen per skill, "Generate draft with AI" entry point)
+- Question Bank Builder (bulk import CSV/manual form, media upload)
+- Review Queue (Writing/Speaking submissions needing human check)
+- Certificate Management (issue/revoke/reissue, template editor)
+- Analytics/Reports
+- Settings (feature flags, rounding rules, roles/permissions, per-agent confidence thresholds/retry policy)
+- Audit Log viewer
+
+### 7.4 UX Principles
+- Off-white background, single accent color, Inter typeface, tight heading letter-spacing — consistent with existing design system.
+- Test-taking screens replicate real IELTS test-day chrome (minimal chrome, big timer, distraction-free) — deliberately different visual register from the rest of the app (which is warmer/branded).
+- Responsive-first for test-taking (the layout must work cleanly on a phone browser, since many users will prep on mobile even without a native app); admin panel is desktop-first/responsive-secondary.
+- Every async AI-scoring step shows explicit status (queued → scoring → ready) rather than a spinner with no context.
+
+---
+
+## 8. Non-Functional Requirements
+- **Performance:** audio streaming must start <1s; test timer must be authoritative server-side (prevent client clock tampering).
+- **Reliability:** in-progress attempts autosave to the server every 15–30s regardless of trigger (tab close, refresh, connection drop); resume-on-reconnect picks the attempt back up mid-test. A service worker can cache the current question set so a brief connectivity blip doesn't lose in-progress answers.
+- **Security:** role-based guards on every API route; signed URLs for audio/certificate PDFs; rate-limiting on auth endpoints.
+- **Scalability:** AI scoring and PDF/certificate generation run as background jobs (BullMQ) so API stays responsive under load.
+- **Accessibility:** captions/transcripts available for listening audio (post-attempt), scalable font sizes, keyboard navigation.
+
+---
+
+## 9. Tech Stack Summary
+
+| Layer | Choice |
+|---|---|
+| Web frontend | Next.js (App Router), TypeScript — desktop + responsive mobile browser |
+| Mobile frontend | *(Phase 2, not in v1)* React Native (Expo), TypeScript, reusing the same API/types package |
+| Backend | NestJS, TypeScript |
+| Database | PostgreSQL + Prisma ORM |
+| Queue/Cache | Redis + BullMQ |
+| Realtime (optional) | Socket.io (live status updates: AI scoring progress, admin review notifications) |
+| AI Scoring | Claude API (Writing/Speaking rubric scoring + feedback) |
+| Speech-to-Text | Third-party STT provider (for Speaking transcription) |
+| Storage | S3-compatible bucket (audio uploads, generated PDFs) |
+| Auth | JWT (access + refresh), OAuth (Google/Apple) |
+| PDF Generation | Server-side templated PDF (certificates) |
+
+---
+
+## 10. Build Roadmap / Todos
+
+### Phase 1 — Foundation
+- [ ] Set up NestJS monorepo with Prisma schema (User, Role, TestSet, Question, Attempt, Score, Certificate)
+- [ ] Auth module: register/login/OAuth/JWT/refresh, email verification
+- [ ] RolesGuard + permission matrix across all modules
+- [ ] Next.js app shell (responsive, desktop + mobile browser) + shared design system (Inter, off-white theme, component library)
+
+### Phase 2 — Core Test Engine
+- [ ] Question bank data model + admin CRUD (Listening/Reading/Writing/Speaking)
+- [ ] Test-taking UI: Listening (audio player + question panel), Reading (split view)
+- [ ] Server-authoritative timer + autosave/resume logic
+- [ ] Auto-grading engine for Listening/Reading (MCQ, matching, completion types)
+
+### Phase 3 — Agent Orchestration Layer (build once, reuse everywhere)
+- [ ] Stand up DAG-based agent orchestrator on BullMQ/Postgres (agent registry, run log schema, retry/backoff policy, confidence-gate config)
+- [ ] Register core agent configs: Writing Scoring, Speaking Scoring, Transcription, Content Generation, Review Triage, Coach, Certificate, Notification, Ops/Support
+- [ ] Admin Agent Ops Dashboard (run list, status, retry, cost/latency, per-agent settings)
+
+### Phase 4 — Writing & Speaking + AI Scoring
+- [ ] Writing editor (word count, timer) + submission flow → dispatches Writing Scoring Agent job
+- [ ] Speaking recorder (web MediaRecorder API) + upload pipeline → dispatches Transcription Agent → Speaking Scoring Agent chain
+- [ ] Review Triage Agent wiring: low-confidence auto-routes to human review queue, high-confidence auto-publishes
+- [ ] Instructor review queue UI + override flow
+
+### Phase 5 — Certificates & Verification
+- [ ] Certificate data model + milestone trigger logic (config-driven) → dispatches Certificate Agent
+- [ ] PDF generation service + admin-editable template
+- [ ] Public verification page `/verify/:id`
+- [ ] Student certificate screen (download/share/LinkedIn)
+- [ ] Admin certificate management (issue/revoke/reissue + audit log)
+
+### Phase 6 — Practice, Analytics, Notifications, Content Gen
+- [ ] Practice Bank (filter/bookmark) + Vocabulary/Flashcard module (spaced repetition)
+- [ ] Coach Agent: nightly job producing per-student recommended-next-action + weak-area set
+- [ ] Content Generation Agent wired into admin Content Manager ("Generate draft with AI")
+- [ ] Student analytics (band trend, radar chart, time-on-task) via chart library
+- [ ] Admin analytics dashboard (usage, drop-off, content performance)
+- [ ] Notification Agent + push/email delivery + in-app center
+- [ ] Ops/Support Agent chat panel for admin natural-language queries
+
+### Phase 7 — Access Tiers & Polish
+- [ ] Subscription tier flags (manual admin grant, gateway-ready structure for v2)
+- [ ] Full onboarding wizard + diagnostic quiz
+- [ ] Accessibility pass (captions, font scaling, keyboard nav)
+- [ ] PWA basics for web (installable, service-worker caching for test resilience)
+- [ ] Agent cost/latency alerting (flag runaway cost or failure-rate spikes)
+- [ ] End-to-end QA: full mock test run-through on web (desktop + mobile browser), admin content lifecycle, certificate issue-to-verify path, agent retry/failure scenarios
+
+### Phase 8 — Native Mobile App (future, post-web-launch)
+- [ ] React Native (Expo) app shell reusing the existing NestJS API and shared types
+- [ ] Port test-taking screens to native (native mic recording, push notifications)
+- [ ] App store submission (iOS/Android)
+
+---
+
+## 11. Open Questions
+- Which STT provider for Speaking transcription (cost/accuracy tradeoff)?
+- Confidence threshold for auto-accepting AI Writing/Speaking scores vs. routing to human review?
+- Certificate milestone default: single full mock test, or a multi-step "course" structure?
+- Payment gateway choice for v2 (local Bangladesh gateways vs. Stripe for international reach)?

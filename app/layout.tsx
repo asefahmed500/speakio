@@ -1,15 +1,21 @@
-import { Geist, Geist_Mono } from "next/font/google"
+import { Inter } from "next/font/google"
+import type { Metadata } from "next"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils"
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'})
-
-const fontMono = Geist_Mono({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-mono",
+  weight: ["400", "500", "600"],
+  variable: "--font-inter",
+  display: "swap",
 })
+
+export const metadata: Metadata = {
+  title: "Speakio — IELTS Prep & Band Scoring",
+  description: "Agent-native IELTS preparation with AI band scoring and verifiable certificates.",
+}
 
 export default function RootLayout({
   children,
@@ -20,9 +26,9 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("antialiased", fontMono.variable, "font-sans", geist.variable)}
+      className={cn("scroll-smooth font-sans", inter.variable)}
     >
-      <body>
+      <body className="min-h-screen bg-background text-foreground antialiased font-sans">
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
