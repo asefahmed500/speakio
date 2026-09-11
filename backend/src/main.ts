@@ -9,7 +9,10 @@ async function bootstrap() {
 
   // Honour X-Forwarded-* from one proxy hop so throttler keys use the real
   // client IP instead of the proxy's (shared) address.
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  const expressApp = app.getHttpAdapter().getInstance() as {
+    set: (setting: string, value: unknown) => void;
+  };
+  expressApp.set('trust proxy', 1);
 
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cookieParser());
@@ -27,9 +30,15 @@ async function bootstrap() {
   // Ensure Prisma disconnects cleanly on SIGTERM/SIGINT.
   app.enableShutdownHooks();
 
-  const port = process.env.PORT || 4000;
+  const port = process.env.PORT || 5000;
   await app.listen(port);
-  console.log(`Speakio Backend API running on http://localhost:${port}`);
+  const baseUrl = `http://localhost:${port}`;
+  console.log('---------------------------------------------');
+  console.log('  SPEAKIO BACKEND IS RUNNING');
+  console.log(`  API ready:      ${baseUrl}`);
+  console.log(`  Health check:   ${baseUrl}/health`);
+  console.log(`  CORS origin(s): ${frontendUrl}`);
+  console.log('---------------------------------------------');
 }
 
 bootstrap().catch((err) => {

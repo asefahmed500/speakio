@@ -19,15 +19,19 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { isValidBand } from '../common/band.utils';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
 
 const scoreWritingSchema = z.object({
   attemptId: z.string().min(1).max(100),
-  questionPrompt: z.string().min(1).max(5000),
-  taskType: z.enum(['TASK_1', 'TASK_2']),
+  // Accepted for backwards compatibility only — the server always derives the
+  // prompt and task type from the bound question row (see below).
+  questionPrompt: z.string().max(5000).optional(),
+  taskType: z.enum(['TASK_1', 'TASK_2']).optional(),
   studentEssay: z
     .string()
     .refine((v) => v.trim().split(/\s+/).filter(Boolean).length >= 20, {
-      message: 'Student essay must contain at least 20 words for rubric evaluation',
+      message:
+        'Student essay must contain at least 20 words for rubric evaluation',
     })
     .refine((v) => v.trim().split(/\s+/).filter(Boolean).length <= 1500, {
       message: 'Student essay exceeds the maximum of 1500 words',
@@ -37,7 +41,8 @@ const scoreWritingSchema = z.object({
 const resolveSchema = z.object({
   action: z.enum(['APPROVE', 'OVERRIDE']),
   finalBand: z.number().refine(isValidBand, {
-    message: 'finalBand must be a valid IELTS score between 0.0 and 9.0 in 0.5 increments',
+    message:
+      'finalBand must be a valid IELTS score between 0.0 and 9.0 in 0.5 increments',
   }),
   instructorNotes: z.string().trim().max(2000).optional(),
 });
@@ -55,15 +60,18 @@ export class ScoringController {
   async scoreWriting(
     @Body(new ZodValidationPipe(scoreWritingSchema))
     body: z.infer<typeof scoreWritingSchema>,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     // Ownership check: students may only score their own attempts.
     const attempt = await this.prisma.attempt.findUnique({
       where: { id: body.attemptId },
       include: { testSet: true },
     });
-    if (!attempt) throw new NotFoundException(`Attempt ${body.attemptId} not found`);
-    const privileged = ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(req.user.role);
+    if (!attempt)
+      throw new NotFoundException(`Attempt ${body.attemptId} not found`);
+    const privileged = ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(
+      req.user.role,
+    );
     if (attempt.userId !== req.user.sub && !privileged) {
       throw new NotFoundException(`Attempt ${body.attemptId} not found`);
     }
@@ -79,7 +87,9 @@ export class ScoringController {
         );
       }
       if (attempt.testSet.skill !== 'WRITING') {
-        throw new BadRequestException('Only writing attempts can be scored through this endpoint');
+        throw new BadRequestException(
+          'Only writing attempts can be scored through this endpoint',
+        );
       }
     }
 
@@ -90,14 +100,24 @@ export class ScoringController {
       orderBy: { orderIndex: 'asc' },
     });
     if (!writingQuestion) {
-      throw new BadRequestException('Attempt has no writing prompt to score against');
+      throw new BadRequestException(
+        'Attempt has no writing prompt to score against',
+      );
     }
-    const metadata = (writingQuestion.metadata as Record<string, unknown>) ?? {};
-    const taskType = metadata.taskType === 'TASK_1' ? 'TASK_1' : 'TASK_2';
+    // partNumber is the source of truth (seeded Task 1 chart questions carry
+    // no metadata.taskType); metadata is only a legacy hint.
+    const metadata =
+      (writingQuestion.metadata as Record<string, unknown>) ?? {};
+    const taskType =
+      writingQuestion.partNumber === 1 || metadata.taskType === 'TASK_1'
+        ? 'TASK_1'
+        : 'TASK_2';
 
     return this.writingAgent.scoreEssay({
       attemptId: body.attemptId,
-      questionPrompt: writingQuestion.prompt,
+      questionPrompt: writingQuestion.passage
+        ? `${writingQuestion.prompt}\n\nDATA SUMMARY: ${writingQuestion.passage}`
+        : writingQuestion.prompt,
       taskType,
       studentEssay: body.studentEssay,
       userContext: { userId: req.user.sub, role: req.user.role },
@@ -128,13 +148,17 @@ export class ScoringController {
   @Throttle({ default: { limit: 6, ttl: 60_000 } })
   @Post('runs/:id/retry')
   @Roles('ADMIN', 'SUPER_ADMIN')
-  async retryAgentRun(@Param('id') id: string, @Req() req: any) {
+  async retryAgentRun(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const run = await this.prisma.agentRun.findUnique({ where: { id } });
     if (!run) throw new NotFoundException(`Agent run ${id} not found`);
     const STALE_RUN_MS = 5 * 60 * 1000;
     const isRetryable =
       run.status === 'FAILED' ||
-      (run.status === 'RUNNING' && Date.now() - run.createdAt.getTime() > STALE_RUN_MS);
+      (run.status === 'RUNNING' &&
+        Date.now() - run.createdAt.getTime() > STALE_RUN_MS);
     if (!isRetryable) {
       throw new ConflictException(
         run.status === 'RUNNING'
@@ -143,13 +167,18 @@ export class ScoringController {
       );
     }
     if (run.agentType !== 'WRITING_SCORING' || !run.attemptId) {
-      throw new BadRequestException('Only writing-scoring runs bound to an attempt can be retried');
+      throw new BadRequestException(
+        'Only writing-scoring runs bound to an attempt can be retried',
+      );
     }
     if (run.status === 'RUNNING') {
       // Reclaim the wedged run so its state never lies about reality.
       await this.prisma.agentRun.update({
         where: { id: run.id },
-        data: { status: 'FAILED', error: 'Released by admin retry after staleness timeout' },
+        data: {
+          status: 'FAILED',
+          error: 'Released by admin retry after staleness timeout',
+        },
       });
     }
 
@@ -166,23 +195,46 @@ export class ScoringController {
       });
     }
     const answers = (attempt.answersJson as Record<string, string>) ?? {};
-    const essayEntry = Object.values(answers).find((v) => typeof v === 'string' && v.trim().length > 0);
-    if (!essayEntry) throw new BadRequestException('Attempt has no essay content to score');
+    // Pick the essay in the attempt's served-question order (mirrors the
+    // submit path) instead of arbitrary object-key order.
+    const snapshotIds = Array.isArray(attempt.questionIdsJson)
+      ? (attempt.questionIdsJson as string[])
+      : null;
+    const orderedQuestions = await this.prisma.question.findMany({
+      where: {
+        testSetId: attempt.testSetId,
+        ...(snapshotIds ? { id: { in: snapshotIds } } : {}),
+      },
+      orderBy: { orderIndex: 'asc' },
+      select: { id: true },
+    });
+    const essayEntry = orderedQuestions
+      .map((q) => answers[q.id])
+      .find((v) => typeof v === 'string' && v.trim().length > 0);
+    if (!essayEntry)
+      throw new BadRequestException('Attempt has no essay content to score');
 
     // Derive the real prompt/task from the bound question, not placeholders.
     const writingQuestion = await this.prisma.question.findFirst({
       where: { testSetId: attempt.testSetId },
       orderBy: { orderIndex: 'asc' },
     });
-    if (!writingQuestion) throw new BadRequestException('Attempt has no writing prompt to score against');
-    const metadata = (writingQuestion.metadata as Record<string, unknown>) ?? {};
+    if (!writingQuestion)
+      throw new BadRequestException(
+        'Attempt has no writing prompt to score against',
+      );
+    const metadata =
+      (writingQuestion.metadata as Record<string, unknown>) ?? {};
 
     const result = await this.writingAgent.scoreEssay({
       attemptId: attempt.id,
       questionPrompt: writingQuestion.passage
         ? `${writingQuestion.prompt}\n\nDATA SUMMARY: ${writingQuestion.passage}`
         : writingQuestion.prompt,
-      taskType: metadata.taskType === 'TASK_1' || writingQuestion.partNumber === 1 ? 'TASK_1' : 'TASK_2',
+      taskType:
+        metadata.taskType === 'TASK_1' || writingQuestion.partNumber === 1
+          ? 'TASK_1'
+          : 'TASK_2',
       studentEssay: essayEntry,
       userContext: { userId: req.user.sub, role: req.user.role },
     });
@@ -211,8 +263,9 @@ export class ScoringController {
   @Roles('INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN')
   async resolveReview(
     @Param('id') id: string,
-    @Body(new ZodValidationPipe(resolveSchema)) body: z.infer<typeof resolveSchema>,
-    @Req() req: any,
+    @Body(new ZodValidationPipe(resolveSchema))
+    body: z.infer<typeof resolveSchema>,
+    @Req() req: AuthenticatedRequest,
   ) {
     const item = await this.prisma.reviewQueueItem.findUnique({
       where: { id },
@@ -222,7 +275,9 @@ export class ScoringController {
       throw new NotFoundException(`Review queue item ${id} not found`);
     }
     if (item.status !== 'PENDING') {
-      throw new ConflictException(`Review item has already been resolved (${item.status})`);
+      throw new ConflictException(
+        `Review item has already been resolved (${item.status})`,
+      );
     }
     if (item.skill !== 'SPEAKING' && !item.attempt) {
       throw new BadRequestException('Review item is not bound to an attempt');
@@ -243,16 +298,21 @@ export class ScoringController {
         },
       });
       if (claim.count === 0) {
-        throw new ConflictException('Review item was just resolved by another examiner');
+        throw new ConflictException(
+          'Review item was just resolved by another examiner',
+        );
       }
       const updated = await tx.reviewQueueItem.findUnique({ where: { id } });
 
       // One final score per (attempt, skill) — resolving twice can never duplicate.
       await tx.score.upsert({
-        where: { attemptId_skill: { attemptId: item.attemptId, skill: item.skill } },
+        where: {
+          attemptId_skill: { attemptId: item.attemptId, skill: item.skill },
+        },
         update: {
           bandScore: body.finalBand,
-          feedbackSummary: body.instructorNotes || 'Instructor verified band score.',
+          feedbackSummary:
+            body.instructorNotes || 'Instructor verified band score.',
           scoredBy: 'INSTRUCTOR',
           confidence: 1.0,
         },
@@ -260,7 +320,8 @@ export class ScoringController {
           attemptId: item.attemptId,
           skill: item.skill,
           bandScore: body.finalBand,
-          feedbackSummary: body.instructorNotes || 'Instructor verified band score.',
+          feedbackSummary:
+            body.instructorNotes || 'Instructor verified band score.',
           scoredBy: 'INSTRUCTOR',
           confidence: 1.0,
         },

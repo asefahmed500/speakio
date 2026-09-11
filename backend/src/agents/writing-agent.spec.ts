@@ -1,16 +1,51 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WritingScoringAgent } from './writing-scoring.agent';
-import { AiService } from '../ai/ai.service';
 import { ModelRouterService } from '../ai/model-router.service';
 import { ToolRegistryService } from './tools/tool-registry.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ForbiddenException } from '@nestjs/common';
+import { runWritingScoringGraph } from './langgraph/writing-scoring.graph';
+
+// The graph builds a real ChatOpenAI against Z.AI — it must never execute in
+// unit tests (the previous suite exercised the real model path, failing CI
+// without env vars and making network calls with them). Mocking keeps the
+// suite hermetic; the graph itself is covered by its own focused tests.
+jest.mock('./langgraph/writing-scoring.graph', () => ({
+  runWritingScoringGraph: jest.fn(),
+}));
+
+const mockGraph = runWritingScoringGraph as jest.Mock;
+
+function graphResult(confidence: number, gate: 'PUBLISH' | 'REVIEW') {
+  return {
+    score: {
+      taskAchievement: 7.5,
+      coherenceCohesion: 7.0,
+      lexicalResource: 7.5,
+      grammaticalAccuracy: 7.0,
+      overallBand: 7.0,
+      confidence,
+      criterionFeedback: {
+        taskAchievement: 'Clear position throughout',
+        coherenceCohesion: 'Well-sequenced paragraphs',
+        lexicalResource: 'Rich academic vocabulary',
+        grammaticalAccuracy: 'Good syntactic control',
+      },
+      overallFeedback: 'Solid academic performance.',
+      inlineCorrections: [],
+    },
+    gate,
+    steps: [
+      { name: 'loadSubmission', durationMs: 1, summary: 'ok' },
+      { name: 'scoreEssay', durationMs: 2, summary: 'ok' },
+    ],
+  };
+}
 
 describe('WritingScoringAgent & Z.AI Infrastructure', () => {
   let agent: WritingScoringAgent;
   let modelRouter: ModelRouterService;
   let toolRegistry: ToolRegistryService;
-  let prisma: PrismaService;
 
   const mockPrisma = {
     agentRun: {
@@ -21,10 +56,14 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
       create: jest.fn().mockResolvedValue({ id: 'mock-step-1' }),
     },
     score: {
-      upsert: jest.fn().mockResolvedValue({ id: 'mock-score-1', bandScore: 7.5 }),
+      upsert: jest
+        .fn()
+        .mockResolvedValue({ id: 'mock-score-1', bandScore: 7.0 }),
     },
     attempt: {
-      update: jest.fn().mockResolvedValue({ id: 'mock-attempt-1', status: 'COMPLETED' }),
+      update: jest
+        .fn()
+        .mockResolvedValue({ id: 'mock-attempt-1', status: 'COMPLETED' }),
       findUnique: jest.fn().mockResolvedValue({
         id: 'mock-attempt-1',
         userId: 'student-123',
@@ -34,74 +73,60 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
     },
     reviewQueueItem: {
       findUnique: jest.fn().mockResolvedValue(null),
-      upsert: jest.fn().mockResolvedValue({ id: 'rq-1', status: 'PENDING' }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      create: jest.fn().mockResolvedValue({ id: 'rq-1', status: 'PENDING' }),
     },
   };
 
-  const mockAiService = {
-    executeStructuredTask: jest.fn(),
-  };
-
   beforeEach(async () => {
+    jest.clearAllMocks();
+    mockPrisma.reviewQueueItem.findUnique.mockResolvedValue(null);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WritingScoringAgent,
         ModelRouterService,
         ToolRegistryService,
         { provide: PrismaService, useValue: mockPrisma },
-        { provide: AiService, useValue: mockAiService },
       ],
     }).compile();
 
     agent = module.get<WritingScoringAgent>(WritingScoringAgent);
     modelRouter = module.get<ModelRouterService>(ModelRouterService);
     toolRegistry = module.get<ToolRegistryService>(ToolRegistryService);
-    prisma = module.get<PrismaService>(PrismaService);
   });
 
   describe('Model Router Strategy', () => {
-    it('should route REASONING_EVAL to glm-4-plus', () => {
-      const model = modelRouter.getModelForTask('REASONING_EVAL');
-      expect(model).toBe('glm-4-plus');
+    // Expectations follow the env contract (ZAI_MODEL_*), not hardcoded model
+    // names — the provider catalog changes, the routing behavior must not.
+    const reasoning = process.env.ZAI_MODEL_REASONING || 'glm-5';
+    const general = process.env.ZAI_MODEL_GENERAL || 'glm-4.5-air';
+    const fast = process.env.ZAI_MODEL_FAST || 'glm-5.3-flash';
+
+    it('should route REASONING_EVAL to the reasoning tier', () => {
+      expect(modelRouter.getModelForTask('REASONING_EVAL')).toBe(reasoning);
     });
 
-    it('should route COACH_ADVISOR to glm-4-air', () => {
-      const model = modelRouter.getModelForTask('COACH_ADVISOR');
-      expect(model).toBe('glm-4-air');
+    it('should route COACH_ADVISOR to the general tier', () => {
+      expect(modelRouter.getModelForTask('COACH_ADVISOR')).toBe(general);
     });
 
-    it('should route FAST_CLASSIFY to glm-4-flash', () => {
-      const model = modelRouter.getModelForTask('FAST_CLASSIFY');
-      expect(model).toBe('glm-4-flash');
+    it('should route FAST_CLASSIFY to the fast tier', () => {
+      expect(modelRouter.getModelForTask('FAST_CLASSIFY')).toBe(fast);
     });
 
-    it('should fallback from glm-4-plus to glm-4-air', () => {
-      const fallback = modelRouter.getFallbackModel('glm-4-plus');
-      expect(fallback).toBe('glm-4-air');
+    it('should fall back from the reasoning tier to the general tier', () => {
+      expect(modelRouter.getFallbackModel(reasoning)).toBe(general);
+    });
+
+    it('should fall back from other tiers to the fast tier', () => {
+      expect(modelRouter.getFallbackModel(general)).toBe(fast);
     });
   });
 
   describe('WritingScoringAgent Execution & Confidence Gate', () => {
     it('should auto-publish when confidence >= 0.85', async () => {
-      mockAiService.executeStructuredTask.mockResolvedValueOnce({
-        data: {
-          taskAchievement: 7.5,
-          coherenceCohesion: 7.0,
-          lexicalResource: 7.5,
-          grammaticalAccuracy: 7.0,
-          overallBand: 7.5,
-          confidence: 0.92,
-          criterionFeedback: {
-            taskAchievement: 'Clear position throughout',
-            coherenceCohesion: 'Well-sequenced paragraphs',
-            lexicalResource: 'Rich academic vocabulary',
-            grammaticalAccuracy: 'Good syntactic control',
-          },
-          overallFeedback: 'Band 7.5 performance with strong task achievement.',
-          inlineCorrections: [],
-        },
-        result: { totalTokens: 1250 },
-      });
+      mockGraph.mockResolvedValueOnce(graphResult(0.92, 'PUBLISH'));
 
       const result = await agent.scoreEssay({
         attemptId: 'att-101',
@@ -114,28 +139,11 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
       expect(result.status).toBe('COMPLETED');
       expect(result.scoreId).toBe('mock-score-1');
       expect(mockPrisma.score.upsert).toHaveBeenCalled();
+      expect(mockPrisma.reviewQueueItem.create).not.toHaveBeenCalled();
     });
 
     it('should route to Review Queue when confidence < 0.85', async () => {
-      mockAiService.executeStructuredTask.mockResolvedValueOnce({
-        data: {
-          taskAchievement: 6.5,
-          coherenceCohesion: 6.0,
-          lexicalResource: 7.0,
-          grammaticalAccuracy: 6.5,
-          overallBand: 6.5,
-          confidence: 0.74, // Below threshold
-          criterionFeedback: {
-            taskAchievement: 'Borderline',
-            coherenceCohesion: 'Unclear progression',
-            lexicalResource: 'Adequate',
-            grammaticalAccuracy: 'Frequent slips',
-          },
-          overallFeedback: 'Needs examiner verification due to borderline cohesion.',
-          inlineCorrections: [],
-        },
-        result: { totalTokens: 1180 },
-      });
+      mockGraph.mockResolvedValueOnce(graphResult(0.74, 'REVIEW'));
 
       const result = await agent.scoreEssay({
         attemptId: 'att-102',
@@ -147,7 +155,7 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
 
       expect(result.status).toBe('WAITING_FOR_APPROVAL');
       expect(result.scoreId).toBeNull();
-      expect(mockPrisma.reviewQueueItem.upsert).toHaveBeenCalled();
+      expect(mockPrisma.reviewQueueItem.create).toHaveBeenCalled();
     });
   });
 
@@ -158,13 +166,18 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
         attemptId: 'att-102',
         status: 'APPROVED',
       });
-      mockPrisma.reviewQueueItem.upsert.mockClear();
       await toolRegistry.executeTool(
         'flagForInstructorReview',
-        { attemptId: 'att-102', skill: 'WRITING', proposedBand: 6.0, notes: 'retry' },
+        {
+          attemptId: 'att-102',
+          skill: 'WRITING',
+          proposedBand: 6.0,
+          notes: 'retry',
+        },
         { userId: 'system', role: 'SYSTEM_ATTEMPT' },
       );
-      expect(mockPrisma.reviewQueueItem.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.reviewQueueItem.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.reviewQueueItem.create).not.toHaveBeenCalled();
     });
 
     it('should prohibit student from accessing another candidate submission', async () => {
@@ -178,30 +191,42 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
     });
 
     it('should allow candidate to access their own submission', async () => {
-      const sub = await toolRegistry.executeTool(
+      const sub = (await toolRegistry.executeTool(
         'getAttemptSubmission',
         { attemptId: 'mock-attempt-1' },
         { userId: 'student-123', role: 'STUDENT' },
-      );
+      )) as { id: string };
       expect(sub.id).toBe('mock-attempt-1');
     });
 
     it('should calculate IELTS band score according to half-band rounding rules', async () => {
       // 6.25 average -> rounds up to 6.5
-      const res1 = await toolRegistry.executeTool(
+      const res1 = (await toolRegistry.executeTool(
         'calculateBandScore',
         { criteriaScores: [6.0, 6.5, 6.5, 6.0] },
         { userId: 'student-123', role: 'STUDENT' },
-      );
+      )) as { bandScore: number };
       expect(res1.bandScore).toBe(6.5);
 
       // 6.125 average -> rounds down to 6.0
-      const res2 = await toolRegistry.executeTool(
+      const res2 = (await toolRegistry.executeTool(
         'calculateBandScore',
         { criteriaScores: [6.0, 6.0, 6.5, 6.0] },
         { userId: 'student-123', role: 'STUDENT' },
-      );
+      )) as { bandScore: number };
       expect(res2.bandScore).toBe(6.0);
+    });
+
+    it('should reject empty criteriaScores instead of producing NaN', () => {
+      // executeTool invokes sync tool bodies synchronously — a bad argument
+      // surfaces as a synchronous throw rather than a rejected promise.
+      expect(() =>
+        toolRegistry.executeTool(
+          'calculateBandScore',
+          { criteriaScores: [] },
+          { userId: 'student-123', role: 'STUDENT' },
+        ),
+      ).toThrow();
     });
   });
 });

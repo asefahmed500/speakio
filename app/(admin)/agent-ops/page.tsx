@@ -51,6 +51,7 @@ export default function AgentOpsPage() {
       setError(fetchError?.message ?? "Failed to load agent runs.")
     } else {
       setRuns(data)
+      setError(null)
     }
     setLoading(false)
     setRefreshing(false)

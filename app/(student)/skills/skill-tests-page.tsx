@@ -63,7 +63,7 @@ const SKILL_CONFIG: Record<
       "Task 1 and Task 2 essays evaluated by the AI examiner against all four official IELTS criteria. Borderline scores go to a human examiner.",
     cta: "Write essay",
     icon: FileText,
-    note: "Requires a minimum of 20 words per essay. Scoring usually completes within seconds.",
+    note: "Requires a minimum of 20 words per essay. The AI examiner usually returns your band within a couple of minutes.",
   },
   SPEAKING: {
     title: "Speaking",
@@ -95,6 +95,7 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
     } else {
       // Draft/empty test sets (0 questions) are not takeable — never list them.
       setTests(testsResult.data.filter((t) => t.questionCount > 0))
+      setError(null)
     }
     if (!summaryResult.error && summaryResult.data) {
       setSummary(summaryResult.data)

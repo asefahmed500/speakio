@@ -8,7 +8,7 @@ export interface StructuredGenerateOptions<T> {
   temperature?: number;
   maxTokens?: number;
   responseFormat?: { type: 'json_object' | 'text' };
-  validator?: (data: any) => T;
+  validator?: (data: unknown) => T;
 }
 
 @Injectable()
@@ -23,14 +23,25 @@ export class AiService {
   async executeTask(
     taskType: AiTaskType,
     messages: ChatMessage[],
-    options?: { temperature?: number; maxTokens?: number; responseFormat?: { type: 'json_object' | 'text' } },
+    options?: {
+      temperature?: number;
+      maxTokens?: number;
+      responseFormat?: { type: 'json_object' | 'text' };
+    },
   ): Promise<GenerateResult> {
     const primaryModel = this.modelRouter.getModelForTask(taskType);
-    let attempts = 0;
-    const maxRetries = 2;
+    // Real escalation chain: primary -> fallback -> fallback of the fallback,
+    // instead of re-trying the same fallback model twice.
+    const chain = [primaryModel];
+    let next = this.modelRouter.getFallbackModel(primaryModel);
+    while (chain.length < 3 && !chain.includes(next)) {
+      chain.push(next);
+      next = this.modelRouter.getFallbackModel(next);
+    }
 
-    while (attempts <= maxRetries) {
-      const model = attempts === 0 ? primaryModel : this.modelRouter.getFallbackModel(primaryModel);
+    let lastError: unknown;
+    for (let attempt = 0; attempt < chain.length; attempt++) {
+      const model = chain[attempt];
       try {
         const startTime = Date.now();
         const result = await this.zaiProvider.generate({
@@ -41,28 +52,37 @@ export class AiService {
           responseFormat: options?.responseFormat,
         });
         const duration = Date.now() - startTime;
-        this.logger.log(`Task ${taskType} executed on ${model} in ${duration}ms, tokens: ${result.totalTokens}`);
+        this.logger.log(
+          `Task ${taskType} executed on ${model} in ${duration}ms, tokens: ${result.totalTokens}`,
+        );
         return result;
-      } catch (error: any) {
-        attempts++;
-        this.logger.warn(`Attempt ${attempts} failed on model ${model}: ${error.message}`);
-        if (attempts > maxRetries) {
-          throw error;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `Attempt ${attempt + 1} failed on model ${model}: ${message}`,
+        );
+        if (attempt < chain.length - 1) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 1000 * (attempt + 1)),
+          );
         }
-        await new Promise((resolve) => setTimeout(resolve, 1000 * attempts));
       }
     }
 
+    if (lastError instanceof Error) throw lastError;
     throw new Error(`Execution failed after retries for task ${taskType}`);
   }
 
-  async executeStructuredTask<T>(options: StructuredGenerateOptions<T>): Promise<{ data: T; result: GenerateResult }> {
-    const primaryModel = this.modelRouter.getModelForTask(options.taskType);
+  async executeStructuredTask<T>(
+    options: StructuredGenerateOptions<T>,
+  ): Promise<{ data: T; result: GenerateResult }> {
     const baseMessages: ChatMessage[] = [
       ...options.messages,
       {
         role: 'system',
-        content: 'IMPORTANT: Respond strictly with valid JSON conforming to the requested schema. Do not enclose in markdown ticks if possible, or use standard ```json blocks.',
+        content:
+          'IMPORTANT: Respond strictly with valid JSON conforming to the requested schema. Do not enclose in markdown ticks if possible, or use standard ```json blocks.',
       },
     ];
 
@@ -85,33 +105,47 @@ export class AiService {
             ]
           : baseMessages;
 
-      const generateResult = await this.executeTask(options.taskType, corrective, {
-        temperature: options.temperature ?? 0.1,
-        maxTokens: options.maxTokens ?? 2500,
-        responseFormat: options.responseFormat,
-      });
+      const generateResult = await this.executeTask(
+        options.taskType,
+        corrective,
+        {
+          temperature: options.temperature ?? 0.1,
+          maxTokens: options.maxTokens ?? 2500,
+          responseFormat: options.responseFormat,
+        },
+      );
 
       let raw = generateResult.content.trim();
       if (raw.startsWith('```json')) {
-        raw = raw.replace(/^```json/, '').replace(/```$/, '').trim();
+        raw = raw
+          .replace(/^```json/, '')
+          .replace(/```$/, '')
+          .trim();
       } else if (raw.startsWith('```')) {
         raw = raw.replace(/^```/, '').replace(/```$/, '').trim();
       }
 
       try {
-        const parsed = JSON.parse(raw);
-        const validatedData = options.validator ? options.validator(parsed) : (parsed as T);
+        const parsed: unknown = JSON.parse(raw);
+        const validatedData = options.validator
+          ? options.validator(parsed)
+          : (parsed as T);
         return { data: validatedData, result: generateResult };
-      } catch (parseError: any) {
-        lastParseError = parseError;
+      } catch (parseError) {
+        lastParseError =
+          parseError instanceof Error
+            ? parseError
+            : new Error(String(parseError));
         parseAttempt++;
         this.logger.warn(
-          `Structured output parse/validation failed (attempt ${parseAttempt}/${maxParseRetries + 1}) for task ${options.taskType}: ${parseError.message}`,
+          `Structured output parse/validation failed (attempt ${parseAttempt}/${maxParseRetries + 1}) for task ${options.taskType}: ${lastParseError.message}`,
         );
       }
     }
 
-    this.logger.error(`Structured output failed after ${maxParseRetries + 1} attempts for task ${options.taskType}`);
+    this.logger.error(
+      `Structured output failed after ${maxParseRetries + 1} attempts for task ${options.taskType}`,
+    );
     throw new Error(
       `Failed to obtain valid structured output from model after ${maxParseRetries + 1} attempts: ${lastParseError?.message ?? 'unknown error'}`,
     );

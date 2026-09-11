@@ -5,9 +5,10 @@ export const loginSchema = z.object({
     .string()
     .min(1, "Email address is required")
     .email("Please enter a valid email address (e.g. candidate@example.com)"),
+  // Mirrors the registration minimum so the hint and enforcement agree.
   password: z
     .string()
-    .min(6, "Password must be at least 6 characters"),
+    .min(8, "Password must be at least 8 characters"),
 })
 
 export type LoginFormData = z.infer<typeof loginSchema>

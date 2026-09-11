@@ -12,6 +12,7 @@ import {
   Square,
   Play,
   FileText,
+  Volume2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -81,6 +82,10 @@ export default function TakeTestPage() {
   const secondsRef = useRef(secondsLeft)
   const attemptRef = useRef(attempt)
   const submittingRef = useRef(false)
+  // One-shot guard for the expiry auto-submit: without it a failed auto-submit
+  // re-arms the timer effect and re-POSTs every second (429 storm against a
+  // 12/min throttled endpoint).
+  const autoSubmitRef = useRef(false)
 
   // Keep refs in sync outside of render (read by autosave/submit callbacks).
   useEffect(() => {
@@ -95,6 +100,7 @@ export default function TakeTestPage() {
 
   // Speaking recorder state
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const [recordingState, setRecordingState] = useState<
     "idle" | "requesting" | "recording" | "processing" | "recorded" | "denied"
@@ -145,6 +151,17 @@ export default function TakeTestPage() {
 
       if (error || !data) {
         submittingRef.current = false
+        // A 409/404 here almost always means the attempt was already submitted
+        // (e.g. the first auto-submit reached the server but the response was
+        // lost). A 503 means answers were saved and the attempt is SUBMITTED,
+        // but AI scoring failed — the results page owns the retry-scoring flow.
+        // In all three cases land on the results page instead of asking to
+        // resubmit.
+        if (error && (error.status === 409 || error.status === 404 || error.status === 503)) {
+          clearExamDraft()
+          router.push(`/results/${currentAttempt.id}`)
+          return
+        }
         setPhase("ready")
         setBannerError(
           error?.status === 400
@@ -186,10 +203,8 @@ export default function TakeTestPage() {
         json: { testSetId: testData.id },
       })
       if (cancelled) return
-      if (attemptError?.status === 401) {
-        router.push("/login")
-        return
-      }
+      // 401 on a non-auth endpoint is already handled centrally by apiFetch
+      // (full-page redirect to /login?next=…); a second push here only races it.
       if (attemptError || !attemptData) {
         setLoadError(attemptError?.message ?? "Could not start the attempt.")
         setPhase("error")
@@ -205,13 +220,20 @@ export default function TakeTestPage() {
       const serverAnswers = attemptData.answersJson ?? {}
       const draft = examStore.getState()
       const draftMatches = draft.attemptId === attemptData.id
-      const merged = draftMatches ? { ...serverAnswers, ...draftAnswersToMap(draft) } : serverAnswers
+      const draftMap = draftAnswersToMap(draft)
+      // Essay text is stored under `essayText`, not `answers`, so it must be
+      // merged back explicitly or unsaved typing since the last autosave is lost.
+      if (draftMatches && draft.essayText) {
+        const essayQuestionId = testData.questions.find((q) => q.questionType === "ESSAY")?.id
+        if (essayQuestionId) draftMap[essayQuestionId] = draft.essayText
+      }
+      const merged = draftMatches ? { ...serverAnswers, ...draftMap } : serverAnswers
 
       setTest(testData)
       setAttempt(attemptData)
       setAnswers(merged)
       setSecondsLeft(attemptData.timeRemainingSeconds ?? testData.timeLimitMinutes * 60)
-      setDraftRestored(draftMatches && Object.keys(draftAnswersToMap(draft)).length > 0)
+      setDraftRestored(draftMatches && Object.keys(draftMap).length > 0)
       examStore.setState({ attemptId: attemptData.id })
       setPhase("ready")
     }
@@ -227,15 +249,20 @@ export default function TakeTestPage() {
   useEffect(() => {
     if (phase !== "ready" || !hasTimer) return
     const interval = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev === null) return prev
-        if (prev <= 1) {
-          clearInterval(interval)
+      // Read from the ref and drive the tick outside the state updater —
+      // updaters must stay pure (StrictMode invokes them twice).
+      const prev = secondsRef.current
+      if (prev === null) return
+      if (prev <= 1) {
+        clearInterval(interval)
+        setSecondsLeft(0)
+        if (!autoSubmitRef.current) {
+          autoSubmitRef.current = true
           void doSubmit(true)
-          return 0
         }
-        return prev - 1
-      })
+        return
+      }
+      setSecondsLeft(prev - 1)
     }, 1000)
     return () => clearInterval(interval)
   }, [phase, hasTimer, doSubmit])
@@ -263,8 +290,10 @@ export default function TakeTestPage() {
     const interval = setInterval(() => {
       setRecordingSeconds((s) => {
         if (s + 1 >= 120) {
+          // .stop() fires recorder.onstop, which commits the blob and moves
+          // the state through processing → recorded. Setting "recorded" here
+          // as well only causes a transient flicker.
           mediaRecorderRef.current?.stop()
-          setRecordingState("recorded")
           return 120
         }
         return s + 1
@@ -273,12 +302,27 @@ export default function TakeTestPage() {
     return () => clearInterval(interval)
   }, [recordingState])
 
+  // Release the microphone if the user leaves mid-recording (route change,
+  // back navigation). Without this the browser keeps the mic live.
+  useEffect(() => {
+    return () => {
+      const recorder = mediaRecorderRef.current
+      if (recorder && recorder.state === "recording") recorder.stop()
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+    }
+  }, [])
+
   const setAnswer = (questionId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }))
+    // Multi-megabyte base64 audio would blow the ~5MB localStorage quota and
+    // silently kill draft persistence for every other answer. The recording
+    // still reaches the server via autosave/submit; it just isn't rehydrated
+    // into the local draft.
+    const isTooLargeForDraft = value.startsWith("data:audio")
     const isEssay = test?.questions.some((q) => q.id === questionId && q.questionType === "ESSAY")
     if (isEssay) {
       setEssayText(value)
-    } else {
+    } else if (!isTooLargeForDraft) {
       setDraftAnswer(questionId, value)
     }
   }
@@ -304,6 +348,7 @@ export default function TakeTestPage() {
     setRecordingState("requesting")
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
       const recorder = new MediaRecorder(stream)
       chunksRef.current = []
       recorder.ondataavailable = (e) => {
@@ -319,7 +364,6 @@ export default function TakeTestPage() {
           const firstQuestion = test?.questions[0]
           if (firstQuestion) {
             setAnswers((prev) => ({ ...prev, [firstQuestion.id]: base64 }))
-            setDraftAnswer(firstQuestion.id, base64)
           }
           setRecordingState("recorded")
         }
@@ -328,7 +372,11 @@ export default function TakeTestPage() {
           setAudioError("The recording could not be processed. Please try recording again.")
         }
         reader.readAsDataURL(blob)
-        setAudioUrl(URL.createObjectURL(blob))
+        // Revoke the previous preview so re-recording doesn't leak object URLs.
+        setAudioUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev)
+          return URL.createObjectURL(blob)
+        })
         stream.getTracks().forEach((t) => t.stop())
       }
       mediaRecorderRef.current = recorder
@@ -559,18 +607,33 @@ export default function TakeTestPage() {
               {test.questions.map((q, index) => (
                 <fieldset key={q.id} className="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-3">
                   <legend className="sr-only">Question {index + 1}</legend>
+                  {q.audioUrl && (
+                    <div className="space-y-1.5 rounded-lg bg-surface-subtle border border-border p-3">
+                      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                        <Volume2 className="h-3.5 w-3.5" aria-hidden />
+                        Listening audio
+                      </p>
+                      {/* The audio IS the question stimulus for LISTENING sets —
+                          without it the questions are unanswerable. */}
+                      <audio controls src={q.audioUrl} className="w-full" preload="auto">
+                        Your browser does not support audio playback.
+                      </audio>
+                    </div>
+                  )}
                   <p className="text-sm font-medium leading-relaxed">
                     <span className="text-muted-foreground mr-2">{index + 1}.</span>
                     {q.prompt}
                   </p>
                   {q.options ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {q.options.map((option) => {
-                        const optionId = `q-${q.id}-opt-${option.trim().replace(/\s+/g, "-")}`
+                      {q.options.map((option, optIndex) => {
+                        // Derive the id from the index — label-text-derived ids
+                        // can collide for options differing only in whitespace.
+                        const optionId = `q-${q.id}-opt-${optIndex}`
                         const selected = answers[q.id] === option.trim()
                         return (
                           <label
-                            key={option}
+                            key={optionId}
                             htmlFor={optionId}
                             className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm cursor-pointer transition-colors ${
                               selected
@@ -615,7 +678,7 @@ export default function TakeTestPage() {
             {isWriting
               ? essayWordCount < 20
                 ? "Your essay needs at least 20 words before it can be submitted."
-                : "Ready to submit. AI scoring typically takes a few seconds."
+                : "Ready to submit. AI scoring usually completes within a couple of minutes."
               : isSpeaking
                 ? recordingState === "recorded"
                   ? "Your recording is ready to submit."
@@ -650,7 +713,9 @@ function draftAnswersToMap(draft: {
 }): Record<string, string> {
   const map: Record<string, string> = {}
   Object.values(draft.answers).forEach((a) => {
-    if (a.answer) map[a.questionId] = a.answer
+    // Empty entries are kept deliberately: a user who cleared an answer must
+    // not see the older server value resurrect on refresh.
+    map[a.questionId] = a.answer
   })
   return map
 }

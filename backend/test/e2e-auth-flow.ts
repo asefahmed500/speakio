@@ -1,5 +1,7 @@
 async function testEndToEndAuth() {
-  console.log('Testing End-to-End Authentication & Cookie Flow on http://localhost:4000...');
+  console.log(
+    'Testing End-to-End Authentication & Cookie Flow on http://localhost:4000...',
+  );
 
   // 1. Register candidate
   const candidateEmail = `candidate_${Date.now()}@example.com`;
@@ -38,7 +40,9 @@ async function testEndToEndAuth() {
   console.log('Protected User Profile returned:', meData);
 
   if (meRes.status === 200 && meData.email === candidateEmail) {
-    console.log('\n[SUCCESS] End-to-end authentication, password hashing, and cookie verification passed!');
+    console.log(
+      '\n[SUCCESS] End-to-end authentication, password hashing, and cookie verification passed!',
+    );
   } else {
     console.error('\n[FAILURE] Cookie or auth verification failed.');
   }

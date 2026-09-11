@@ -47,6 +47,20 @@ interface AutoGradeDetail {
   total?: number
 }
 
+/** Shape persisted by the writing AI agent inside inlineFeedbackJson. */
+interface InlineCorrection {
+  originalText: string
+  correctedText: string
+  explanation: string
+}
+
+interface WritingFeedback {
+  criterionFeedback?: Partial<
+    Record<"taskAchievement" | "coherenceCohesion" | "lexicalResource" | "grammaticalAccuracy", string>
+  >
+  inlineCorrections?: InlineCorrection[]
+}
+
 export default function ResultPage() {
   const params = useParams<{ attemptId: string }>()
   const attemptId = params?.attemptId
@@ -56,6 +70,7 @@ export default function ResultPage() {
   const [error, setError] = useState<string | null>(null)
   const [errorStatus, setErrorStatus] = useState<number | null>(null)
   const [rescoring, setRescoring] = useState(false)
+  const [rescoreError, setRescoreError] = useState<string | null>(null)
 
   const fetchResult = useCallback(async () => {
     if (!attemptId) return
@@ -83,6 +98,14 @@ export default function ResultPage() {
     }
   }, [fetchResult])
 
+  // While the AI examiner is scoring, poll until a terminal status arrives —
+  // without this the "Scoring in progress" panel never updates by itself.
+  useEffect(() => {
+    if (result?.status !== "SCORING") return
+    const interval = setInterval(() => void fetchResult(), 10_000)
+    return () => clearInterval(interval)
+  }, [result?.status, fetchResult])
+
   const router = useRouter()
   const inProgress = result?.status === "IN_PROGRESS"
 
@@ -99,10 +122,12 @@ export default function ResultPage() {
 
   const rescore = async () => {
     setRescoring(true)
+    setRescoreError(null)
     const { error: rescoreError } = await apiFetch(`/attempts/${attemptId}/rescore`, { method: "POST" })
     if (rescoreError) {
-      setError(rescoreError.message)
-      setErrorStatus(null)
+      // Keep the result view mounted — swapping the whole page for the
+      // generic error screen would discard the retry affordance itself.
+      setRescoreError(rescoreError.message)
     } else {
       await fetchResult()
     }
@@ -158,6 +183,11 @@ export default function ResultPage() {
   const score = result.score
   const isWriting = result.testSet.skill === "WRITING"
   const autoDetail = (score?.inlineFeedbackJson ?? null) as AutoGradeDetail | null
+  // WRITING stores { criterionFeedback, inlineCorrections }; auto-graded skills
+  // store { perQuestion, correctCount, total }. Both flow through the same column.
+  const writingFeedback = (score?.inlineFeedbackJson ?? null) as WritingFeedback | null
+  const inlineCorrections = writingFeedback?.inlineCorrections ?? []
+  const criterionFeedback = writingFeedback?.criterionFeedback ?? {}
 
   return (
     <div className="flex-1 bg-surface-subtle">
@@ -212,6 +242,11 @@ export default function ResultPage() {
                 </p>
               </div>
             </div>
+            {rescoreError && (
+              <p role="alert" className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
+                {rescoreError}
+              </p>
+            )}
             <Button size="sm" onClick={() => void rescore()} disabled={rescoring} className="cursor-pointer">
               {rescoring ? (
                 <>
@@ -249,6 +284,11 @@ export default function ResultPage() {
                 </p>
               </div>
             </div>
+            {rescoreError && (
+              <p role="alert" className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
+                {rescoreError}
+              </p>
+            )}
             <Button size="sm" onClick={() => void rescore()} disabled={rescoring} className="cursor-pointer">
               {rescoring ? (
                 <>
@@ -311,14 +351,14 @@ export default function ResultPage() {
                 <h2 className="text-sm font-semibold">Criteria breakdown</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {[
-                    { label: "Task Achievement / Response", value: score.taskAchievement },
-                    { label: "Coherence & Cohesion", value: score.coherenceCohesion },
-                    { label: "Lexical Resource", value: score.lexicalResource },
-                    { label: "Grammatical Range & Accuracy", value: score.grammaticalAccuracy },
+                    { label: "Task Achievement / Response", value: score.taskAchievement, key: "taskAchievement" },
+                    { label: "Coherence & Cohesion", value: score.coherenceCohesion, key: "coherenceCohesion" },
+                    { label: "Lexical Resource", value: score.lexicalResource, key: "lexicalResource" },
+                    { label: "Grammatical Range & Accuracy", value: score.grammaticalAccuracy, key: "grammaticalAccuracy" },
                   ].map(
                     (c) =>
                       c.value != null && (
-                        <div key={c.label} className="rounded-lg bg-surface-subtle border border-border p-3">
+                        <div key={c.key} className="rounded-lg bg-surface-subtle border border-border p-3">
                           <div className="flex items-center justify-between">
                             <span className="text-xs text-muted-foreground">{c.label}</span>
                             <span className="text-sm font-semibold tabular-nums">{c.value.toFixed(1)}</span>
@@ -329,6 +369,11 @@ export default function ResultPage() {
                               style={{ width: `${(c.value / 9) * 100}%` }}
                             />
                           </div>
+                          {criterionFeedback[c.key as keyof typeof criterionFeedback] && (
+                            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                              {criterionFeedback[c.key as keyof typeof criterionFeedback]}
+                            </p>
+                          )}
                         </div>
                       ),
                   )}
@@ -341,6 +386,32 @@ export default function ResultPage() {
                     <p className="text-sm leading-relaxed text-foreground/90">{score.feedbackSummary}</p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* AI inline corrections (spelling + grammar fixes quoted from the essay) */}
+            {isWriting && inlineCorrections.length > 0 && (
+              <div className="rounded-xl border border-border bg-card p-5 sm:p-6 space-y-3">
+                <h2 className="text-sm font-semibold">Detailed corrections</h2>
+                <ul className="space-y-2">
+                  {inlineCorrections.map((c, i) => (
+                    <li
+                      key={`${c.originalText}-${i}`}
+                      className="rounded-lg bg-surface-subtle border border-border px-3 py-2.5 space-y-1"
+                    >
+                      <p className="text-xs">
+                        <span className="text-destructive line-through decoration-destructive/60">
+                          {c.originalText}
+                        </span>
+                        <span className="mx-1.5 text-muted-foreground" aria-hidden>
+                          →
+                        </span>
+                        <span className="text-success font-medium">{c.correctedText}</span>
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">{c.explanation}</p>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 

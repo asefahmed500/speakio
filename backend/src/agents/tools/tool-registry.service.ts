@@ -1,14 +1,47 @@
 import { Injectable, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SkillType } from '@prisma/client';
 
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 
+export interface ToolContext {
+  userId: string;
+  role: string;
+}
+
+/**
+ * A registered agent tool. `run` receives untyped arguments (the calling
+ * agent owns the contract) and must validate them before use — returning
+ * `unknown` keeps unsafe values from leaking into callers.
+ */
 export interface ToolDefinition {
   name: string;
   description: string;
   riskLevel: RiskLevel;
   requiredRole?: string[];
-  handler: (args: any, userContext: { userId: string; role: string }) => Promise<any>;
+  run: (args: unknown, userContext: ToolContext) => unknown;
+}
+
+interface AttemptLookupArgs {
+  attemptId: string;
+}
+
+interface BandScoreArgs {
+  criteriaScores: number[];
+}
+
+interface FlagReviewArgs {
+  attemptId: string;
+  skill: SkillType;
+  proposedBand: number;
+  notes: string;
+}
+
+function expectArgs<T>(args: unknown): T {
+  if (args === null || typeof args !== 'object') {
+    throw new Error('Tool arguments must be an object');
+  }
+  return args as T;
 }
 
 @Injectable()
@@ -26,14 +59,18 @@ export class ToolRegistryService {
       name: 'getAttemptSubmission',
       description: 'Fetches student submission text for an attempt',
       riskLevel: 'LOW',
-      handler: async (args: { attemptId: string }, userContext) => {
+      run: async (rawArgs, userContext) => {
+        const args = expectArgs<AttemptLookupArgs>(rawArgs);
         const attempt = await this.prisma.attempt.findUnique({
           where: { id: args.attemptId },
           include: { testSet: true, user: true },
         });
         if (!attempt) throw new Error(`Attempt not found: ${args.attemptId}`);
         // Authorization: owner or instructor/admin
-        if (attempt.userId !== userContext.userId && !['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(userContext.role)) {
+        if (
+          attempt.userId !== userContext.userId &&
+          !['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(userContext.role)
+        ) {
           throw new ForbiddenException('Unauthorized access to attempt');
         }
         return {
@@ -48,9 +85,19 @@ export class ToolRegistryService {
     // Tool 2: calculateBandScore (LOW risk)
     this.registerTool({
       name: 'calculateBandScore',
-      description: 'Calculates IELTS overall band score applying official rounding rules',
+      description:
+        'Calculates IELTS overall band score applying official rounding rules',
       riskLevel: 'LOW',
-      handler: async (args: { criteriaScores: number[] }) => {
+      run: (rawArgs) => {
+        const args = expectArgs<BandScoreArgs>(rawArgs);
+        if (
+          !Array.isArray(args.criteriaScores) ||
+          args.criteriaScores.length === 0
+        ) {
+          throw new Error(
+            'criteriaScores must be a non-empty array of numbers',
+          );
+        }
         const sum = args.criteriaScores.reduce((acc, val) => acc + val, 0);
         const avg = sum / args.criteriaScores.length;
         // IELTS rounding: e.g. 6.125 -> 6.0, 6.25 -> 6.5, 6.75 -> 7.0
@@ -62,9 +109,11 @@ export class ToolRegistryService {
     // Tool 3: flagForInstructorReview (MEDIUM risk)
     this.registerTool({
       name: 'flagForInstructorReview',
-      description: 'Routes an AI-scored submission below confidence threshold to the instructor review queue',
+      description:
+        'Routes an AI-scored submission below confidence threshold to the instructor review queue',
       riskLevel: 'MEDIUM',
-      handler: async (args: { attemptId: string; skill: any; proposedBand: number; notes: string }) => {
+      run: async (rawArgs) => {
+        const args = expectArgs<FlagReviewArgs>(rawArgs);
         const existing = await this.prisma.reviewQueueItem.findUnique({
           where: { attemptId: args.attemptId },
         });
@@ -72,14 +121,29 @@ export class ToolRegistryService {
         if (existing && existing.status !== 'PENDING') {
           return existing;
         }
-        return this.prisma.reviewQueueItem.upsert({
-          where: { attemptId: args.attemptId },
-          update: {
-            proposedBand: args.proposedBand,
-            instructorNotes: args.notes,
-            status: 'PENDING',
-          },
-          create: {
+        if (existing) {
+          // Conditional update (not an upsert with a PENDING write): a rescore
+          // racing an examiner's resolve must not flip a resolved item back to
+          // PENDING — the status precondition makes that race impossible.
+          const reopened = await this.prisma.reviewQueueItem.updateMany({
+            where: { id: existing.id, status: 'PENDING' },
+            data: {
+              proposedBand: args.proposedBand,
+              instructorNotes: args.notes,
+            },
+          });
+          if (reopened.count === 0) {
+            const resolved = await this.prisma.reviewQueueItem.findUnique({
+              where: { id: existing.id },
+            });
+            return resolved;
+          }
+          return this.prisma.reviewQueueItem.findUnique({
+            where: { id: existing.id },
+          });
+        }
+        return this.prisma.reviewQueueItem.create({
+          data: {
             attemptId: args.attemptId,
             skill: args.skill,
             proposedBand: args.proposedBand,
@@ -93,18 +157,24 @@ export class ToolRegistryService {
 
   registerTool(tool: ToolDefinition) {
     this.tools.set(tool.name, tool);
-    this.logger.log(`Registered agent tool [${tool.name}] with risk level ${tool.riskLevel}`);
+    this.logger.log(
+      `Registered agent tool [${tool.name}] with risk level ${tool.riskLevel}`,
+    );
   }
 
-  async executeTool(name: string, args: any, userContext: { userId: string; role: string }) {
+  executeTool(name: string, args: unknown, userContext: ToolContext): unknown {
     const tool = this.tools.get(name);
     if (!tool) throw new Error(`Tool ${name} not found in registry`);
 
     if (tool.requiredRole && !tool.requiredRole.includes(userContext.role)) {
-      throw new ForbiddenException(`User with role ${userContext.role} cannot execute tool ${name}`);
+      throw new ForbiddenException(
+        `User with role ${userContext.role} cannot execute tool ${name}`,
+      );
     }
 
-    this.logger.log(`Executing tool [${name}] by user ${userContext.userId} (${userContext.role})`);
-    return tool.handler(args, userContext);
+    this.logger.log(
+      `Executing tool [${name}] by user ${userContext.userId} (${userContext.role})`,
+    );
+    return tool.run(args, userContext);
   }
 }

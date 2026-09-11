@@ -16,8 +16,16 @@ import { PrismaService } from '../src/prisma/prisma.service';
  */
 
 const ts = Date.now();
-const USER_A = { email: `qa-a-${ts}@speakio.test`, password: 'SuperSecure123!', name: 'QA User A' };
-const USER_B = { email: `qa-b-${ts}@speakio.test`, password: 'SuperSecure123!', name: 'QA User B' };
+const USER_A = {
+  email: `qa-a-${ts}@speakio.test`,
+  password: 'SuperSecure123!',
+  name: 'QA User A',
+};
+const USER_B = {
+  email: `qa-b-${ts}@speakio.test`,
+  password: 'SuperSecure123!',
+  name: 'QA User B',
+};
 
 jest.setTimeout(60_000);
 
@@ -43,7 +51,9 @@ describe('Speakio API (integration e2e)', () => {
           .send({ email, password })
           .then((res) => {
             if (res.status !== 200 && res.status !== 201) {
-              throw new Error(`Login failed for ${email}: ${res.status} ${JSON.stringify(res.body)}`);
+              throw new Error(
+                `Login failed for ${email}: ${res.status} ${JSON.stringify(res.body)}`,
+              );
             }
             return cookieOf(res);
           }),
@@ -65,9 +75,15 @@ describe('Speakio API (integration e2e)', () => {
 
   afterAll(async () => {
     // Cleanup everything created by this run (cascades wipe attempts/scores/etc).
-    await prisma.user.deleteMany({ where: { email: { endsWith: '@speakio.test' } } });
-    await prisma.attempt.deleteMany({ where: { id: { startsWith: 'qa-attempt-' } } });
-    await prisma.reviewQueueItem.deleteMany({ where: { id: { startsWith: 'qa-rq-' } } });
+    await prisma.user.deleteMany({
+      where: { email: { endsWith: '@speakio.test' } },
+    });
+    await prisma.attempt.deleteMany({
+      where: { id: { startsWith: 'qa-attempt-' } },
+    });
+    await prisma.reviewQueueItem.deleteMany({
+      where: { id: { startsWith: 'qa-rq-' } },
+    });
     await app.close();
   });
 
@@ -86,7 +102,10 @@ describe('Speakio API (integration e2e)', () => {
     });
 
     it('rejects duplicate registration with 409', async () => {
-      await request(app.getHttpServer()).post('/auth/register').send(USER_A).expect(409);
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send(USER_A)
+        .expect(409);
     });
 
     it('rejects malformed registration payloads with 400', async () => {
@@ -113,14 +132,20 @@ describe('Speakio API (integration e2e)', () => {
     });
 
     it('logs in and returns the session user', async () => {
-      const res = await request(app.getHttpServer()).post('/auth/login').send(USER_A).expect(200);
+      const res = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send(USER_A)
+        .expect(200);
       expect(res.body.email).toBe(USER_A.email);
       expect(res.body.role).toBe('STUDENT');
     });
 
     it('returns profile for a valid session and 401 without/with invalid token', async () => {
       const cookie = await login(USER_A.email, USER_A.password);
-      const me = await request(app.getHttpServer()).get('/auth/me').set('Cookie', cookie).expect(200);
+      const me = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Cookie', cookie)
+        .expect(200);
       expect(me.body.email).toBe(USER_A.email);
       await request(app.getHttpServer()).get('/auth/me').expect(401);
       await request(app.getHttpServer())
@@ -139,8 +164,14 @@ describe('Speakio API (integration e2e)', () => {
 
     it('forbids STUDENT from admin/instructor endpoints (server-side enforcement)', async () => {
       const cookie = await login(USER_A.email, USER_A.password);
-      await request(app.getHttpServer()).get('/scoring/runs').set('Cookie', cookie).expect(403);
-      await request(app.getHttpServer()).get('/scoring/review-queue').set('Cookie', cookie).expect(403);
+      await request(app.getHttpServer())
+        .get('/scoring/runs')
+        .set('Cookie', cookie)
+        .expect(403);
+      await request(app.getHttpServer())
+        .get('/scoring/review-queue')
+        .set('Cookie', cookie)
+        .expect(403);
     });
 
     it('allows INSTRUCTOR to access the review queue', async () => {
@@ -156,7 +187,10 @@ describe('Speakio API (integration e2e)', () => {
   describe('Test content', () => {
     it('lists seeded test sets with question counts', async () => {
       const cookie = await login(USER_A.email, USER_A.password);
-      const res = await request(app.getHttpServer()).get('/tests').set('Cookie', cookie).expect(200);
+      const res = await request(app.getHttpServer())
+        .get('/tests')
+        .set('Cookie', cookie)
+        .expect(200);
       const skills = res.body.map((t: any) => t.skill);
       expect(skills).toContain('LISTENING');
       expect(skills).toContain('READING');
@@ -179,7 +213,10 @@ describe('Speakio API (integration e2e)', () => {
 
     it('returns 404 for unknown test ids', async () => {
       const cookie = await login(USER_A.email, USER_A.password);
-      await request(app.getHttpServer()).get('/tests/does-not-exist').set('Cookie', cookie).expect(404);
+      await request(app.getHttpServer())
+        .get('/tests/does-not-exist')
+        .set('Cookie', cookie)
+        .expect(404);
     });
   });
 
@@ -213,9 +250,14 @@ describe('Speakio API (integration e2e)', () => {
       await request(app.getHttpServer())
         .patch(`/attempts/${attemptId}`)
         .set('Cookie', cookieA)
-        .send({ answers: { 'lis-s1-q1': '9:30 AM' }, timeRemainingSeconds: 600 })
+        .send({
+          answers: { 'lis-s1-q1': '9:30 AM' },
+          timeRemainingSeconds: 600,
+        })
         .expect(200);
-      const attempt = await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } });
+      const attempt = await prisma.attempt.findUniqueOrThrow({
+        where: { id: attemptId },
+      });
       expect((attempt.answersJson as any)['lis-s1-q1']).toBe('9:30 AM');
       expect(attempt.timeRemainingSeconds).toBe(600);
     });
@@ -248,7 +290,9 @@ describe('Speakio API (integration e2e)', () => {
       expect(score.scoredBy).toBe('AUTO_GRADER');
       expect(score.bandScore).toBe(res.body.bandScore);
 
-      const attempt = await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } });
+      const attempt = await prisma.attempt.findUniqueOrThrow({
+        where: { id: attemptId },
+      });
       expect(attempt.status).toBe('COMPLETED');
     });
 
@@ -271,9 +315,15 @@ describe('Speakio API (integration e2e)', () => {
     });
 
     it('enforces ownership on result access (IDOR)', async () => {
-      await request(app.getHttpServer()).post('/auth/register').send(USER_B).expect(201);
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send(USER_B)
+        .expect(201);
       const cookieB = await login(USER_B.email, USER_B.password);
-      await request(app.getHttpServer()).get(`/attempts/${attemptId}`).set('Cookie', cookieB).expect(403);
+      await request(app.getHttpServer())
+        .get(`/attempts/${attemptId}`)
+        .set('Cookie', cookieB)
+        .expect(403);
       await request(app.getHttpServer())
         .patch(`/attempts/${attemptId}`)
         .set('Cookie', cookieB)
@@ -309,8 +359,12 @@ describe('Speakio API (integration e2e)', () => {
       expect(item.status).toBe('PENDING');
       expect(item.proposedBand).toBeNull();
 
-      await prisma.reviewQueueItem.delete({ where: { id: item.id } }).catch(() => undefined);
-      await prisma.attempt.delete({ where: { id: start.body.id } }).catch(() => undefined);
+      await prisma.reviewQueueItem
+        .delete({ where: { id: item.id } })
+        .catch(() => undefined);
+      await prisma.attempt
+        .delete({ where: { id: start.body.id } })
+        .catch(() => undefined);
     });
   });
 
@@ -335,11 +389,20 @@ describe('Speakio API (integration e2e)', () => {
         .expect(201);
       expect(created.body.word).toBe('mitigate');
 
-      const list = await request(app.getHttpServer()).get('/vocabulary').set('Cookie', cookie).expect(200);
+      const list = await request(app.getHttpServer())
+        .get('/vocabulary')
+        .set('Cookie', cookie)
+        .expect(200);
       expect(list.body.some((i: any) => i.id === created.body.id)).toBe(true);
 
-      await request(app.getHttpServer()).delete(`/vocabulary/${created.body.id}`).set('Cookie', cookie).expect(200);
-      const after = await request(app.getHttpServer()).get('/vocabulary').set('Cookie', cookie).expect(200);
+      await request(app.getHttpServer())
+        .delete(`/vocabulary/${created.body.id}`)
+        .set('Cookie', cookie)
+        .expect(200);
+      const after = await request(app.getHttpServer())
+        .get('/vocabulary')
+        .set('Cookie', cookie)
+        .expect(200);
       expect(after.body.some((i: any) => i.id === created.body.id)).toBe(false);
     });
 
@@ -377,19 +440,25 @@ describe('Speakio API (integration e2e)', () => {
       expect(res.body.overallBand).toBe(8.0);
       expect(res.body.candidateName).toBe('Asef Ahmed');
 
-      await request(app.getHttpServer()).get('/certificates/verify/UNKNOWN-CODE').expect(404);
+      await request(app.getHttpServer())
+        .get('/certificates/verify/UNKNOWN-CODE')
+        .expect(404);
     });
 
     it('refuses to issue a certificate before all four skills are complete', async () => {
       const cookie = await login(USER_B.email, USER_B.password);
-      const res = await request(app.getHttpServer()).post('/certificates').set('Cookie', cookie);
+      const res = await request(app.getHttpServer())
+        .post('/certificates')
+        .set('Cookie', cookie);
       expect(res.status).toBe(400);
       expect(res.body.message).toContain('Missing');
     });
 
     it('rejects PDF download for certificates the user does not own (IDOR)', async () => {
       const cookieB = await login(USER_B.email, USER_B.password);
-      const seeded = await prisma.certificate.findUniqueOrThrow({ where: { id: 'SPK-2026-8891-B80' } });
+      const seeded = await prisma.certificate.findUniqueOrThrow({
+        where: { id: 'SPK-2026-8891-B80' },
+      });
       await request(app.getHttpServer())
         .get(`/certificates/${seeded.id}/pdf`)
         .set('Cookie', cookieB)
@@ -403,7 +472,9 @@ describe('Speakio API (integration e2e)', () => {
     let cookieExaminer: string;
 
     beforeAll(async () => {
-      const userA = await prisma.user.findUniqueOrThrow({ where: { email: USER_A.email } });
+      const userA = await prisma.user.findUniqueOrThrow({
+        where: { email: USER_A.email },
+      });
       const attempt = await prisma.attempt.create({
         data: {
           id: `qa-attempt-${ts}`,
@@ -431,7 +502,11 @@ describe('Speakio API (integration e2e)', () => {
       const res = await request(app.getHttpServer())
         .post(`/scoring/review-queue/${itemId}/resolve`)
         .set('Cookie', cookieExaminer)
-        .send({ action: 'OVERRIDE', finalBand: 7.0, instructorNotes: 'QA override' })
+        .send({
+          action: 'OVERRIDE',
+          finalBand: 7.0,
+          instructorNotes: 'QA override',
+        })
         .expect(201);
       expect(res.body.status).toBe('OVERRIDDEN');
 
@@ -441,7 +516,9 @@ describe('Speakio API (integration e2e)', () => {
       expect(score.bandScore).toBe(7.0);
       expect(score.scoredBy).toBe('INSTRUCTOR');
 
-      const attempt = await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } });
+      const attempt = await prisma.attempt.findUniqueOrThrow({
+        where: { id: attemptId },
+      });
       expect(attempt.status).toBe('COMPLETED');
     });
 
@@ -478,7 +555,9 @@ describe('Speakio API (integration e2e)', () => {
   describe('Essay validation boundary', () => {
     it('rejects essays below the 20-word floor on /scoring/writing', async () => {
       const cookie = await login(USER_A.email, USER_A.password);
-      const userA = await prisma.user.findUniqueOrThrow({ where: { email: USER_A.email } });
+      const userA = await prisma.user.findUniqueOrThrow({
+        where: { email: USER_A.email },
+      });
       const attempt = await prisma.attempt.create({
         data: {
           id: `qa-attempt-w-${ts}`,

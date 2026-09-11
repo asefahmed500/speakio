@@ -25,28 +25,36 @@ export interface GenerateResult {
 @Injectable()
 export class ZaiProvider {
   private readonly logger = new Logger(ZaiProvider.name);
-  private client: OpenAI;
+  private client: OpenAI | null = null;
 
-  constructor() {
-    const apiKey = process.env.ZAI_API_KEY;
-    if (!apiKey) {
-      this.logger.error('ZAI_API_KEY environment variable is not configured');
-      throw new Error('ZAI_API_KEY environment variable is required');
+  /**
+   * Lazily constructs the OpenAI-compatible client. Validating in the
+   * constructor made a missing ZAI_API_KEY a hard bootstrap failure that
+   * killed the whole app (auth, tests, everything) even when AI features
+   * were unused — now only the AI call paths fail, with a clear error.
+   */
+  private getClient(): OpenAI {
+    if (!this.client) {
+      const apiKey = process.env.ZAI_API_KEY;
+      if (!apiKey) {
+        throw new Error('ZAI_API_KEY environment variable is required');
+      }
+      const baseURL =
+        process.env.ZAI_BASE_URL || 'https://api.z.ai/api/paas/v4';
+      this.client = new OpenAI({
+        apiKey,
+        baseURL,
+        timeout: 90_000,
+        maxRetries: 0,
+      });
+      this.logger.log(`Initialized Z.AI Provider pointing to ${baseURL}`);
     }
-    const baseURL = process.env.ZAI_BASE_URL || 'https://api.z.ai/api/paas/v4';
-
-    this.client = new OpenAI({
-      apiKey,
-      baseURL,
-      timeout: 90_000,
-      maxRetries: 0,
-    });
-    this.logger.log(`Initialized Z.AI Provider pointing to ${baseURL}`);
+    return this.client;
   }
 
   async generate(options: GenerateOptions): Promise<GenerateResult> {
     try {
-      const response = await this.client.chat.completions.create({
+      const response = await this.getClient().chat.completions.create({
         model: options.model,
         messages: options.messages,
         temperature: options.temperature ?? 0.2,
@@ -64,15 +72,22 @@ export class ZaiProvider {
         totalTokens: usage?.total_tokens ?? 0,
         model: response.model,
       };
-    } catch (error: any) {
-      this.logger.error(`Z.AI generation failed on model ${options.model}: ${error.message}`, error.stack);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(
+        `Z.AI generation failed on model ${options.model}: ${message}`,
+        stack,
+      );
       throw error;
     }
   }
 
-  async *stream(options: GenerateOptions): AsyncGenerator<string, void, unknown> {
+  async *stream(
+    options: GenerateOptions,
+  ): AsyncGenerator<string, void, unknown> {
     try {
-      const stream = await this.client.chat.completions.create({
+      const stream = await this.getClient().chat.completions.create({
         model: options.model,
         messages: options.messages,
         temperature: options.temperature ?? 0.2,
@@ -86,8 +101,10 @@ export class ZaiProvider {
           yield delta;
         }
       }
-    } catch (error: any) {
-      this.logger.error(`Z.AI stream failed: ${error.message}`, error.stack);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Z.AI stream failed: ${message}`, stack);
       throw error;
     }
   }

@@ -1,6 +1,5 @@
 "use client"
 
-import React, { useState } from "react"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -15,7 +14,6 @@ import {
 
 export default function VerifyLookupPage() {
   const router = useRouter()
-  const [serverError, setServerError] = useState<string | null>(null)
 
   const {
     register,
@@ -27,7 +25,6 @@ export default function VerifyLookupPage() {
   })
 
   const onSubmit = async ({ code }: VerifyLookupFormData) => {
-    setServerError(null)
     router.push(`/verify/${encodeURIComponent(code)}`)
   }
 
@@ -49,12 +46,6 @@ export default function VerifyLookupPage() {
         </div>
 
         <div className="px-6 py-6 sm:px-8">
-          {serverError && (
-            <div role="alert" className="mb-4 border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-              {serverError}
-            </div>
-          )}
-
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
             <div className="space-y-1.5">
               <label htmlFor="verify-code" className="text-xs font-medium text-foreground">

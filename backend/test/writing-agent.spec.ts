@@ -10,7 +10,6 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
   let agent: WritingScoringAgent;
   let modelRouter: ModelRouterService;
   let toolRegistry: ToolRegistryService;
-  let prisma: PrismaService;
 
   const mockPrisma = {
     agentRun: {
@@ -21,10 +20,14 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
       create: jest.fn().mockResolvedValue({ id: 'mock-step-1' }),
     },
     score: {
-      create: jest.fn().mockResolvedValue({ id: 'mock-score-1', bandScore: 7.5 }),
+      create: jest
+        .fn()
+        .mockResolvedValue({ id: 'mock-score-1', bandScore: 7.5 }),
     },
     attempt: {
-      update: jest.fn().mockResolvedValue({ id: 'mock-attempt-1', status: 'COMPLETED' }),
+      update: jest
+        .fn()
+        .mockResolvedValue({ id: 'mock-attempt-1', status: 'COMPLETED' }),
       findUnique: jest.fn().mockResolvedValue({
         id: 'mock-attempt-1',
         userId: 'student-123',
@@ -55,7 +58,6 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
     agent = module.get<WritingScoringAgent>(WritingScoringAgent);
     modelRouter = module.get<ModelRouterService>(ModelRouterService);
     toolRegistry = module.get<ToolRegistryService>(ToolRegistryService);
-    prisma = module.get<PrismaService>(PrismaService);
   });
 
   describe('Model Router Strategy', () => {
@@ -130,7 +132,8 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
             lexicalResource: 'Adequate',
             grammaticalAccuracy: 'Frequent slips',
           },
-          overallFeedback: 'Needs examiner verification due to borderline cohesion.',
+          overallFeedback:
+            'Needs examiner verification due to borderline cohesion.',
           inlineCorrections: [],
         },
         result: { totalTokens: 1180 },
@@ -162,29 +165,29 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
     });
 
     it('should allow candidate to access their own submission', async () => {
-      const sub = await toolRegistry.executeTool(
+      const sub = (await toolRegistry.executeTool(
         'getAttemptSubmission',
         { attemptId: 'mock-attempt-1' },
         { userId: 'student-123', role: 'STUDENT' },
-      );
+      )) as { id: string };
       expect(sub.id).toBe('mock-attempt-1');
     });
 
     it('should calculate IELTS band score according to half-band rounding rules', async () => {
       // 6.25 average -> rounds up to 6.5
-      const res1 = await toolRegistry.executeTool(
+      const res1 = (await toolRegistry.executeTool(
         'calculateBandScore',
         { criteriaScores: [6.0, 6.5, 6.5, 6.0] },
         { userId: 'student-123', role: 'STUDENT' },
-      );
+      )) as { bandScore: number };
       expect(res1.bandScore).toBe(6.5);
 
       // 6.125 average -> rounds down to 6.0
-      const res2 = await toolRegistry.executeTool(
+      const res2 = (await toolRegistry.executeTool(
         'calculateBandScore',
         { criteriaScores: [6.0, 6.0, 6.5, 6.0] },
         { userId: 'student-123', role: 'STUDENT' },
-      );
+      )) as { bandScore: number };
       expect(res2.bandScore).toBe(6.0);
     });
   });

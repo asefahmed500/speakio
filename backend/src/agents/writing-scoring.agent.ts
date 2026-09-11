@@ -1,8 +1,13 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AiService } from '../ai/ai.service';
 import { ToolRegistryService } from './tools/tool-registry.service';
-import { clampToBand } from '../common/band.utils';
+import { runWritingScoringGraph } from './langgraph/writing-scoring.graph';
+import { Prisma, AgentRunStatus } from '@prisma/client';
 
 export interface WritingScoreOutput {
   taskAchievement: number;
@@ -31,7 +36,6 @@ export class WritingScoringAgent {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly aiService: AiService,
     private readonly toolRegistry: ToolRegistryService,
   ) {}
 
@@ -41,11 +45,17 @@ export class WritingScoringAgent {
     taskType: 'TASK_1' | 'TASK_2';
     studentEssay: string;
     userContext: { userId: string; role: string };
-  }): Promise<{ scoreId: string | null; runId: string; status: string; output: WritingScoreOutput }> {
+  }): Promise<{
+    scoreId: string | null;
+    runId: string;
+    status: string;
+    output: WritingScoreOutput;
+  }> {
     const startTime = Date.now();
-    this.logger.log(`Starting WritingScoringAgent for attempt ${params.attemptId}`);
+    this.logger.log(
+      `Starting WritingScoringAgent (LangGraph) for attempt ${params.attemptId}`,
+    );
 
-    // Create AgentRun record
     const agentRun = await this.prisma.agentRun.create({
       data: {
         agentType: 'WRITING_SCORING',
@@ -59,115 +69,47 @@ export class WritingScoringAgent {
     });
 
     try {
-      // Step 1: Prompt Construction with strict IELTS Rubric
-      const systemPrompt = `You are a certified IELTS Senior Examiner. Evaluate the following ${params.taskType} essay strictly using the official IELTS Band Descriptors (0 to 9 in half-band increments).
-
-Assess 4 criteria:
-1. Task Achievement (for Task 1) / Task Response (for Task 2)
-2. Coherence and Cohesion
-3. Lexical Resource
-4. Grammatical Range and Accuracy
-
-Spelling rules (mandatory):
-- Spelling accuracy is scored as part of Lexical Resource, per the official descriptors ("errors in spelling and/or word formation"). Every misspelled word must lower Lexical Resource proportionally to its frequency and severity.
-- List EVERY misspelled word in "inlineCorrections" using the exact original fragment, the corrected spelling, and an explanation that begins with "Spelling:".
-- Do not invent errors; quote the student's text exactly as written.
-
-Output rules (mandatory):
-- All feedback, corrections and explanations MUST be written in polished, correctly spelled, grammatically clean English. Never include spelling or grammar mistakes in your own output text.
-- Keep each criterionFeedback to 2-3 sentences, specific to this essay, quoting the student's exact words where relevant.
-
-Calculate overall band score: (TR + CC + LR + GRA) / 4 rounded to nearest 0.5.
-Calculate self-assessed confidence score between 0.00 and 1.00 based on certainty of rubric application.
-
-Return strictly JSON matching this structure:
-{
-  "taskAchievement": number (0-9, e.g. 7.0),
-  "coherenceCohesion": number (0-9, e.g. 6.5),
-  "lexicalResource": number (0-9, e.g. 7.0),
-  "grammaticalAccuracy": number (0-9, e.g. 6.0),
-  "overallBand": number (0-9, e.g. 6.5),
-  "confidence": number (0.0 to 1.0, e.g. 0.92),
-  "criterionFeedback": {
-    "taskAchievement": "string",
-    "coherenceCohesion": "string",
-    "lexicalResource": "string",
-    "grammaticalAccuracy": "string"
-  },
-  "overallFeedback": "Summary string with constructive exam tips",
-  "inlineCorrections": [
-    {
-      "originalText": "exact sentence fragment from essay",
-      "correctedText": "refined academic phrasing",
-      "explanation": "grammatical, lexical or spelling rationale"
-    }
-  ]
-}`;
-
-      const userMessage = `PROMPT:\n${params.questionPrompt}\n\nSTUDENT ESSAY:\n${params.studentEssay}`;
-
-      // Step 2: Call Z.AI through AiService with strict output validation
-      const { data: rawScoringData, result: genResult } =
-        await this.aiService.executeStructuredTask<WritingScoreOutput>({
-          taskType: 'REASONING_EVAL',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMessage },
-          ],
-          temperature: 0.1,
-          responseFormat: { type: 'json_object' },
-          validator: (data: unknown): WritingScoreOutput => {
-            if (!data || typeof data !== 'object') {
-              throw new BadRequestException('Model returned malformed scoring payload');
-            }
-            const d = data as Record<string, any>;
-            return {
-              taskAchievement: clampToBand(d.taskAchievement),
-              coherenceCohesion: clampToBand(d.coherenceCohesion),
-              lexicalResource: clampToBand(d.lexicalResource),
-              grammaticalAccuracy: clampToBand(d.grammaticalAccuracy),
-              overallBand: clampToBand(d.overallBand),
-              confidence:
-                typeof d.confidence === 'number' && Number.isFinite(d.confidence)
-                  ? Math.min(1, Math.max(0, d.confidence))
-                  : 0, // missing confidence = least confident -> human review
-              criterionFeedback: {
-                taskAchievement: String(d.criterionFeedback?.taskAchievement ?? ''),
-                coherenceCohesion: String(d.criterionFeedback?.coherenceCohesion ?? ''),
-                lexicalResource: String(d.criterionFeedback?.lexicalResource ?? ''),
-                grammaticalAccuracy: String(d.criterionFeedback?.grammaticalAccuracy ?? ''),
-              },
-              overallFeedback: String(d.overallFeedback ?? ''),
-              inlineCorrections: Array.isArray(d.inlineCorrections)
-                ? d.inlineCorrections.slice(0, 20).map((c: any) => ({
-                    originalText: String(c?.originalText ?? ''),
-                    correctedText: String(c?.correctedText ?? ''),
-                    explanation: String(c?.explanation ?? ''),
-                  }))
-                : [],
-            };
-          },
-        });
-      const scoringData = rawScoringData;
-
-      // Record Step
-      await this.prisma.agentStep.create({
-        data: {
-          agentRunId: agentRun.id,
-          stepName: 'ZAI_GLM_RUBRIC_EVALUATION',
-          status: 'SUCCESS',
-          durationMs: Date.now() - startTime,
-          toolInputJson: { essayWordCount: params.studentEssay.split(/\s+/).length },
-          toolOutputJson: scoringData as any,
-        },
+      // LangGraph pipeline: loadSubmission → scoreEssay (Z.AI GLM, structured
+      // output) → validateAndClamp → confidenceGate. DB writes stay here so the
+      // persistence contract is independent of the graph implementation.
+      const {
+        score: scoringData,
+        gate,
+        steps,
+      } = await runWritingScoringGraph({
+        taskType: params.taskType,
+        questionPrompt: params.questionPrompt,
+        essay: params.studentEssay,
       });
 
-      let scoreId: string | null = null;
-      let finalStatus = 'COMPLETED';
+      for (const step of steps) {
+        await this.prisma.agentStep.create({
+          data: {
+            agentRunId: agentRun.id,
+            stepName: step.name.toUpperCase(),
+            status: 'SUCCESS',
+            durationMs: step.durationMs,
+            toolInputJson: {
+              essayWordCount: params.studentEssay.split(/\s+/).length,
+            },
+            toolOutputJson: {
+              summary: step.summary,
+            } satisfies Prisma.InputJsonValue,
+          },
+        });
+      }
 
-      // Confidence Gate: >= 0.85 auto-publishes; < 0.85 routes to review queue
-      if (scoringData.confidence >= 0.85) {
+      let scoreId: string | null = null;
+      let finalStatus: AgentRunStatus = 'COMPLETED';
+
+      if (gate === 'PUBLISH') {
         // Idempotent: one score per (attempt, skill) — retries replace, never duplicate.
+        // inlineFeedbackJson carries BOTH the per-criterion examiner text and the
+        // inline corrections so the results page can render the full AI feedback.
+        const inlineFeedback = {
+          criterionFeedback: scoringData.criterionFeedback,
+          inlineCorrections: scoringData.inlineCorrections,
+        } satisfies Prisma.InputJsonValue;
         const score = await this.prisma.score.upsert({
           where: {
             attemptId_skill: { attemptId: params.attemptId, skill: 'WRITING' },
@@ -179,8 +121,8 @@ Return strictly JSON matching this structure:
             lexicalResource: scoringData.lexicalResource,
             grammaticalAccuracy: scoringData.grammaticalAccuracy,
             feedbackSummary: scoringData.overallFeedback,
-            inlineFeedbackJson: scoringData.inlineCorrections as any,
-            scoredBy: 'AI_GLM',
+            inlineFeedbackJson: inlineFeedback,
+            scoredBy: 'AI_GLM_LANGGRAPH',
             confidence: scoringData.confidence,
           },
           create: {
@@ -192,8 +134,8 @@ Return strictly JSON matching this structure:
             lexicalResource: scoringData.lexicalResource,
             grammaticalAccuracy: scoringData.grammaticalAccuracy,
             feedbackSummary: scoringData.overallFeedback,
-            inlineFeedbackJson: scoringData.inlineCorrections as any,
-            scoredBy: 'AI_GLM',
+            inlineFeedbackJson: inlineFeedback,
+            scoredBy: 'AI_GLM_LANGGRAPH',
             confidence: scoringData.confidence,
           },
         });
@@ -204,7 +146,6 @@ Return strictly JSON matching this structure:
           data: { status: 'COMPLETED' },
         });
       } else {
-        // Below confidence threshold: route to review queue
         finalStatus = 'WAITING_FOR_APPROVAL';
         await this.toolRegistry.executeTool(
           'flagForInstructorReview',
@@ -223,15 +164,14 @@ Return strictly JSON matching this structure:
         });
       }
 
-      // Finalize AgentRun
       const totalDuration = Date.now() - startTime;
       await this.prisma.agentRun.update({
         where: { id: agentRun.id },
         data: {
-          status: finalStatus as any,
+          status: finalStatus,
           confidence: scoringData.confidence,
-          outputPayloadJson: scoringData as any,
-          costTokens: genResult.totalTokens,
+          outputPayloadJson: scoringData satisfies Prisma.InputJsonValue,
+          costTokens: 0,
           durationMs: totalDuration,
           completedAt: new Date(),
         },
@@ -243,17 +183,31 @@ Return strictly JSON matching this structure:
         status: finalStatus,
         output: scoringData,
       };
-    } catch (error: any) {
-      this.logger.error(`WritingScoringAgent failed: ${error.message}`, error.stack);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`WritingScoringAgent failed: ${message}`, stack);
       await this.prisma.agentRun.update({
         where: { id: agentRun.id },
         data: {
           status: 'FAILED',
-          error: error.message,
+          error: message,
           completedAt: new Date(),
         },
       });
-      throw error;
+      // Distinguish "you did something wrong" from "our infrastructure is
+      // down": missing env config or a provider outage is a 503, not a 400.
+      const isInfraFailure =
+        /ZAI_|api key|base ?url|fetch failed|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|timed? ?out|rate ?limit|status code 5\d\d/i.test(
+          message,
+        );
+      throw isInfraFailure
+        ? new ServiceUnavailableException(
+            'The AI scoring service is temporarily unavailable. Your submission is saved — please retry in a moment.',
+          )
+        : new BadRequestException(
+            'The scoring agent could not complete this run. Use retry — the attempt is kept intact.',
+          );
     }
   }
 }

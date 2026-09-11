@@ -34,7 +34,8 @@ export class AppService {
       status: 'ok',
       version: '1.0',
       docs: [
-        { name: 'auth', path: '/auth' },
+        { name: 'auth (login/register/refresh/logout/me)', path: '/auth' },
+        { name: 'users (profile update)', path: '/users' },
         { name: 'tests', path: '/tests' },
         { name: 'attempts', path: '/attempts' },
         { name: 'scoring (agent runs)', path: '/scoring' },

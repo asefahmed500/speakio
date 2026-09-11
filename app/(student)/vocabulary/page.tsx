@@ -75,6 +75,7 @@ export default function VocabularyPage() {
       setItems(null)
     } else {
       setItems(data)
+      setError(null)
     }
     setLoading(false)
   }, [])
@@ -174,6 +175,23 @@ export default function VocabularyPage() {
       window.prompt("Copy:", text)
     }
   }
+
+  // Modal semantics: Escape closes, background scroll is locked, and the
+  // first field receives focus — matching the ConfirmationModal contract.
+  const firstFieldRef = React.useRef<HTMLInputElement | null>(null)
+  React.useEffect(() => {
+    if (!addOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAddOpen(false)
+    }
+    document.body.style.overflow = "hidden"
+    window.addEventListener("keydown", handleKeyDown)
+    firstFieldRef.current?.focus()
+    return () => {
+      document.body.style.overflow = "unset"
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [addOpen])
 
   return (
     <div className="flex-1 bg-surface-subtle">
@@ -345,12 +363,13 @@ export default function VocabularyPage() {
             placeholder="Paste a sentence to rewrite at Band 8+ level…"
             className="min-h-[72px] text-sm"
             aria-label="Sentence to rewrite"
+            maxLength={2000}
           />
           <div className="flex items-center gap-3">
             <Button
               size="sm"
               onClick={() => void handleParaphrase()}
-              disabled={paraphrasing || sourceText.trim().length < 10}
+              disabled={paraphrasing || sourceText.trim().length < 10 || sourceText.length > 2000}
               className="cursor-pointer"
             >
               {paraphrasing ? (
@@ -363,6 +382,11 @@ export default function VocabularyPage() {
             </Button>
             {sourceText.trim().length > 0 && sourceText.trim().length < 10 && (
               <span className="text-[11px] text-muted-foreground">Minimum 10 characters</span>
+            )}
+            {sourceText.length >= 1900 && (
+              <span className="text-[11px] text-muted-foreground">
+                {sourceText.length}/2000 characters
+              </span>
             )}
           </div>
           {paraphraseError && (
@@ -436,6 +460,7 @@ export default function VocabularyPage() {
                 <label htmlFor="vw-word" className="text-xs font-medium">Word *</label>
                 <Input
                   id="vw-word"
+                  ref={firstFieldRef}
                   value={form.word}
                   onChange={(e) => setForm({ ...form, word: e.target.value })}
                   className="h-9"

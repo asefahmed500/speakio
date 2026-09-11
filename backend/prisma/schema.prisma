@@ -60,10 +60,30 @@ model User {
   certificates           Certificate[]
   reviewsConducted       ReviewQueueItem[]
   vocabularyItems        VocabularyItem[]
+  questionHistory        UserQuestionHistory[]
+  refreshTokens          RefreshToken[]
   createdAt              DateTime          @default(now())
   updatedAt              DateTime          @updatedAt
 
   @@map("users")
+}
+
+/// Rotating refresh tokens. Only the SHA-256 hash is stored. `familyId` groups
+/// a login session's tokens so reuse of a revoked token revokes the whole
+/// family (theft detection).
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familyId  String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
 }
 
 model VocabularyItem {
@@ -115,6 +135,7 @@ model Question {
   metadata     Json?     // Options, correct answers for auto-grading
   orderIndex   Int       @default(0)
   createdAt    DateTime  @default(now())
+  history      UserQuestionHistory[]
 
   @@index([testSetId, orderIndex])
   @@map("questions")
@@ -128,6 +149,7 @@ model Attempt {
   testSet              TestSet       @relation(fields: [testSetId], references: [id], onDelete: Cascade)
   status               AttemptStatus @default(IN_PROGRESS)
   answersJson          Json?         // Keyed by questionId
+  questionIdsJson      Json?         // Snapshot: exact questions this attempt serves (per-user adaptive selection)
   timeRemainingSeconds Int?
   startedAt            DateTime      @default(now())
   submittedAt          DateTime?
@@ -138,6 +160,19 @@ model Attempt {
   @@index([userId, startedAt(sort: Desc)])
   @@index([userId, testSetId, status])
   @@map("attempts")
+}
+
+model UserQuestionHistory {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  shownAt    DateTime @default(now())
+
+  @@unique([userId, questionId])
+  @@index([userId, shownAt(sort: Desc)])
+  @@map("user_question_history")
 }
 
 model Score {
@@ -175,6 +210,7 @@ model Certificate {
   revokedAt         DateTime?
   revocationReason  String?
 
+  @@index([userId])
   @@map("certificates")
 }
 
@@ -210,6 +246,7 @@ model AgentStep {
   durationMs     Int       @default(0)
   createdAt      DateTime  @default(now())
 
+  @@index([agentRunId])
   @@map("agent_steps")
 }
 

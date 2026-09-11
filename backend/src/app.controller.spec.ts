@@ -8,7 +8,9 @@ describe('AppController', () => {
   let appService: AppService;
 
   beforeEach(async () => {
-    const prismaMock = { $queryRaw: jest.fn().mockResolvedValue([]) } as unknown as PrismaService;
+    const prismaMock = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+    } as unknown as PrismaService;
 
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],

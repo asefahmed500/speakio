@@ -4,12 +4,16 @@ import {
   ForbiddenException,
   ConflictException,
   BadRequestException,
+  ServiceUnavailableException,
+  HttpException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WritingScoringAgent } from '../agents/writing-scoring.agent';
+import { QuestionUniquenessService } from '../tests/question-uniqueness.service';
+import { QUESTIONS_PER_ATTEMPT } from '../tests/tests.service';
 import { rawToBand, overallBandOf } from '../common/band.utils';
-import { AttemptStatus, Prisma, SkillType } from '@prisma/client';
+import { AttemptStatus, Prisma, SkillType, Attempt } from '@prisma/client';
 
 const MAX_AUDIO_BASE64_BYTES = 6 * 1024 * 1024;
 
@@ -20,13 +24,18 @@ export class AttemptsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly writingAgent: WritingScoringAgent,
+    private readonly uniqueness: QuestionUniquenessService,
   ) {}
 
   async start(userId: string, testSetId: string) {
-    const testSet = await this.prisma.testSet.findUnique({ where: { id: testSetId } });
-    if (!testSet) throw new NotFoundException(`Test set ${testSetId} not found`);
+    const testSet = await this.prisma.testSet.findUnique({
+      where: { id: testSetId },
+    });
+    if (!testSet)
+      throw new NotFoundException(`Test set ${testSetId} not found`);
 
     // Resume: if an in-progress attempt already exists for this user+test, return it.
+    // Its question snapshot is immutable — a refresh never re-rolls the questions.
     const existing = await this.prisma.attempt.findFirst({
       where: { userId, testSetId, status: AttemptStatus.IN_PROGRESS },
       orderBy: { startedAt: 'desc' },
@@ -35,36 +44,93 @@ export class AttemptsService {
       return { ...existing, resumed: true };
     }
 
-    return this.prisma.attempt.create({
-      data: {
-        userId,
-        testSetId,
-        status: AttemptStatus.IN_PROGRESS,
-        timeRemainingSeconds: testSet.timeLimitMinutes * 60,
-        answersJson: {},
-      },
+    const pool = await this.prisma.question.findMany({
+      where: { testSetId },
+      orderBy: { orderIndex: 'asc' },
     });
+    // Adaptive selection: serve a never-seen subset when the pool is larger
+    // than one attempt's worth of questions; otherwise the full fixed set.
+    const selected =
+      pool.length > QUESTIONS_PER_ATTEMPT
+        ? await this.uniqueness.selectForUser(
+            userId,
+            pool,
+            QUESTIONS_PER_ATTEMPT,
+          )
+        : pool;
+    const questionIds = selected.map((q) => q.id);
+
+    let attempt: Attempt;
+    try {
+      attempt = await this.prisma.attempt.create({
+        data: {
+          userId,
+          testSetId,
+          status: AttemptStatus.IN_PROGRESS,
+          timeRemainingSeconds: testSet.timeLimitMinutes * 60,
+          answersJson: {},
+          questionIdsJson: questionIds,
+        },
+      });
+    } catch (error) {
+      // Lost the race against a concurrent start (double tab, double click):
+      // the partial unique index on (userId, testSetId) WHERE IN_PROGRESS
+      // rejects the duplicate — resume the winner's attempt instead of 500ing.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const winner = await this.prisma.attempt.findFirst({
+          where: { userId, testSetId, status: AttemptStatus.IN_PROGRESS },
+          orderBy: { startedAt: 'desc' },
+        });
+        if (winner) return { ...winner, resumed: true };
+      }
+      throw error;
+    }
+
+    // Persist what this user has now seen so no future attempt (here or in any
+    // other test) serves these questions while fresh ones remain.
+    await this.uniqueness.recordShown(userId, questionIds);
+    return attempt;
   }
 
-  async autosave(userId: string, attemptId: string, answers: Record<string, string>, timeRemainingSeconds?: number) {
+  async autosave(
+    userId: string,
+    attemptId: string,
+    answers: Record<string, string>,
+    timeRemainingSeconds?: number,
+  ) {
     const attempt = await this.getOwnedAttempt(userId, attemptId);
     if (attempt.status !== AttemptStatus.IN_PROGRESS) {
-      throw new ConflictException(`Attempt is ${attempt.status} and can no longer be modified`);
+      throw new ConflictException(
+        `Attempt is ${attempt.status} and can no longer be modified`,
+      );
     }
-    const mergedAnswers = { ...(attempt.answersJson as Record<string, string>), ...answers };
+    const mergedAnswers = {
+      ...(attempt.answersJson as Record<string, string>),
+      ...answers,
+    };
     // Conditional update: the attempt must still be IN_PROGRESS when the write
     // lands. An autosave racing a submit can no longer clobber graded answers.
     const result = await this.prisma.attempt.updateMany({
       where: { id: attemptId, status: AttemptStatus.IN_PROGRESS },
       data: {
-        answersJson: mergedAnswers as Prisma.InputJsonValue,
+        answersJson: mergedAnswers,
         ...(typeof timeRemainingSeconds === 'number'
-          ? { timeRemainingSeconds: Math.max(0, Math.min(6 * 60 * 60, Math.floor(timeRemainingSeconds))) }
+          ? {
+              timeRemainingSeconds: Math.max(
+                0,
+                Math.min(6 * 60 * 60, Math.floor(timeRemainingSeconds)),
+              ),
+            }
           : {}),
       },
     });
     if (result.count === 0) {
-      throw new ConflictException('Attempt is no longer in progress and was not modified');
+      throw new ConflictException(
+        'Attempt is no longer in progress and was not modified',
+      );
     }
     return this.getOwnedAttempt(userId, attemptId);
   }
@@ -89,13 +155,35 @@ export class AttemptsService {
     }
 
     const testSet = attempt.testSet;
+    // Grade against the attempt's question snapshot — the exact set this user
+    // was served — never the whole (possibly larger) adaptive pool.
+    const snapshotIds = Array.isArray(attempt.questionIdsJson)
+      ? (attempt.questionIdsJson as string[])
+      : null;
     const questions = await this.prisma.question.findMany({
-      where: { testSetId: testSet.id },
+      where: {
+        testSetId: testSet.id,
+        ...(snapshotIds ? { id: { in: snapshotIds } } : {}),
+      },
       orderBy: { orderIndex: 'asc' },
     });
     if (questions.length === 0) {
       throw new BadRequestException('This test set has no questions to grade');
     }
+    if (testSet.skill === SkillType.FULL_MOCK) {
+      // Reject BEFORE the status transition — throwing after committing
+      // SUBMITTED would strand the attempt forever (no path back).
+      throw new BadRequestException(
+        'Full mock submission is not supported yet. Please take the individual skill tests.',
+      );
+    }
+
+    // Merge over the autosaved answers: clients submit the full current map,
+    // but a partial body must never silently destroy earlier autosaves.
+    const mergedAnswers = {
+      ...((attempt.answersJson as Record<string, string>) ?? {}),
+      ...answers,
+    };
 
     // Persist the final answers + timer atomically and mark SUBMITTED.
     // The status precondition makes submit single-winner: a second concurrent
@@ -103,9 +191,11 @@ export class AttemptsService {
     const transition = await this.prisma.attempt.updateMany({
       where: { id: attemptId, status: AttemptStatus.IN_PROGRESS },
       data: {
-        answersJson: answers as Prisma.InputJsonValue,
+        answersJson: mergedAnswers,
         timeRemainingSeconds:
-          typeof timeRemainingSeconds === 'number' ? Math.max(0, Math.floor(timeRemainingSeconds)) : undefined,
+          typeof timeRemainingSeconds === 'number'
+            ? Math.max(0, Math.floor(timeRemainingSeconds))
+            : undefined,
         submittedAt: new Date(),
         status: AttemptStatus.SUBMITTED,
       },
@@ -119,16 +209,20 @@ export class AttemptsService {
     switch (testSet.skill) {
       case SkillType.LISTENING:
       case SkillType.READING:
-        return this.autoGrade(attemptId, testSet.skill, questions, answers);
+        return this.autoGrade(
+          attemptId,
+          testSet.skill,
+          questions,
+          mergedAnswers,
+        );
       case SkillType.WRITING:
-        return this.scoreWriting(attempt, questions, answers);
+        return this.scoreWriting(attempt, questions, mergedAnswers);
       case SkillType.SPEAKING:
-        return this.routeSpeakingToReview(attemptId, questions, answers);
+        return this.routeSpeakingToReview(attemptId, questions, mergedAnswers);
       default:
-        // FULL_MOCK has no composite orchestration; an explicit, visible dead
-        // end beats silently stranding the attempt as an unscoreable SUBMITTED.
+        // Exhaustive over the non-FULL_MOCK SkillType union.
         throw new BadRequestException(
-          'Full mock submission is not supported yet. Please take the individual skill tests.',
+          `Unsupported skill: ${String(testSet.skill)}`,
         );
     }
   }
@@ -136,7 +230,11 @@ export class AttemptsService {
   private async autoGrade(
     attemptId: string,
     skill: SkillType,
-    questions: Array<{ id: string; questionType: string; metadata: Prisma.JsonValue | null }>,
+    questions: Array<{
+      id: string;
+      questionType: string;
+      metadata: Prisma.JsonValue | null;
+    }>,
     answers: Record<string, string>,
   ) {
     const perQuestion = questions.map((q) => {
@@ -146,7 +244,10 @@ export class AttemptsService {
       let expected: string | undefined;
 
       if (q.questionType === 'MCQ') {
-        expected = typeof meta.correctAnswer === 'string' ? meta.correctAnswer : undefined;
+        expected =
+          typeof meta.correctAnswer === 'string'
+            ? meta.correctAnswer
+            : undefined;
         correct = !!expected && given.toLowerCase() === expected.toLowerCase();
       } else {
         const accepted = Array.isArray(meta.acceptedAnswers)
@@ -157,7 +258,12 @@ export class AttemptsService {
         expected = accepted[0];
         correct = accepted.some((a) => a.toLowerCase() === given.toLowerCase());
       }
-      return { questionId: q.id, given, correct, expected: correct ? undefined : expected };
+      return {
+        questionId: q.id,
+        given,
+        correct,
+        expected: correct ? undefined : expected,
+      };
     });
 
     const correctCount = perQuestion.filter((r) => r.correct).length;
@@ -168,7 +274,11 @@ export class AttemptsService {
       update: {
         bandScore: band,
         feedbackSummary: `${correctCount}/${questions.length} correct (auto-graded)`,
-        inlineFeedbackJson: { perQuestion, correctCount, total: questions.length },
+        inlineFeedbackJson: {
+          perQuestion,
+          correctCount,
+          total: questions.length,
+        },
         scoredBy: 'AUTO_GRADER',
         confidence: 1.0,
       },
@@ -177,7 +287,11 @@ export class AttemptsService {
         skill,
         bandScore: band,
         feedbackSummary: `${correctCount}/${questions.length} correct (auto-graded)`,
-        inlineFeedbackJson: { perQuestion, correctCount, total: questions.length },
+        inlineFeedbackJson: {
+          perQuestion,
+          correctCount,
+          total: questions.length,
+        },
         scoredBy: 'AUTO_GRADER',
         confidence: 1.0,
       },
@@ -201,10 +315,17 @@ export class AttemptsService {
 
   private async scoreWriting(
     attempt: { id: string; testSetId: string },
-    questions: Array<{ id: string; prompt: string; passage: string | null; partNumber: number }>,
+    questions: Array<{
+      id: string;
+      prompt: string;
+      passage: string | null;
+      partNumber: number;
+    }>,
     answers: Record<string, string>,
   ) {
-    const essayQuestion = questions.find((q) => (answers[q.id] ?? '').trim().length > 0) ?? questions[0];
+    const essayQuestion =
+      questions.find((q) => (answers[q.id] ?? '').trim().length > 0) ??
+      questions[0];
     const essay = (answers[essayQuestion.id] ?? '').trim();
     const wordCount = essay ? essay.split(/\s+/).filter(Boolean).length : 0;
 
@@ -241,14 +362,23 @@ export class AttemptsService {
         bandScore: result.output.overallBand,
         needsReview: result.status === 'WAITING_FOR_APPROVAL',
       };
-    } catch (error: any) {
+    } catch (error) {
       // Keep the attempt in SUBMITTED so it can be re-scored; never fake a result.
       await this.prisma.attempt.update({
         where: { id: attempt.id },
         data: { status: AttemptStatus.SUBMITTED },
       });
-      this.logger.error(`AI scoring failed for attempt ${attempt.id}: ${error.message}`, error.stack);
-      throw new BadRequestException(
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(
+        `AI scoring failed for attempt ${attempt.id}: ${message}`,
+        stack,
+      );
+      // Pass through HTTP exceptions (e.g. the agent's 503 for provider
+      // outages, or its 400 for content problems) instead of flattening every
+      // failure into a misleading client error.
+      if (error instanceof HttpException) throw error;
+      throw new ServiceUnavailableException(
         'AI scoring pipeline is temporarily unavailable. Your submission is saved — please retry scoring in a moment.',
       );
     }
@@ -266,23 +396,31 @@ export class AttemptsService {
         where: { id: attemptId },
         data: { status: AttemptStatus.IN_PROGRESS },
       });
-      throw new BadRequestException('Recording exceeds the 6MB limit. Please record a shorter response.');
+      throw new BadRequestException(
+        'Recording exceeds the 6MB limit. Please record a shorter response.',
+      );
     }
     if (!audioBase64) {
       await this.prisma.attempt.update({
         where: { id: attemptId },
         data: { status: AttemptStatus.IN_PROGRESS },
       });
-      throw new BadRequestException('A recorded response is required before submission');
+      throw new BadRequestException(
+        'A recorded response is required before submission',
+      );
     }
 
-    const existingItem = await this.prisma.reviewQueueItem.findUnique({ where: { attemptId } });
+    const existingItem = await this.prisma.reviewQueueItem.findUnique({
+      where: { attemptId },
+    });
     if (!existingItem || existingItem.status === 'PENDING') {
       // updateMany (not upsert-update) so a race with an instructor resolving
       // the item can never reopen an already-resolved review.
       const reopened = await this.prisma.reviewQueueItem.updateMany({
         where: { attemptId, status: 'PENDING' },
-        data: { instructorNotes: 'Awaiting examiner evaluation of recorded response.' },
+        data: {
+          instructorNotes: 'Awaiting examiner evaluation of recorded response.',
+        },
       });
       if (!existingItem && reopened.count === 0) {
         await this.prisma.reviewQueueItem.create({
@@ -291,7 +429,8 @@ export class AttemptsService {
             skill: SkillType.SPEAKING,
             status: 'PENDING',
             proposedBand: null,
-            instructorNotes: 'Awaiting examiner evaluation of recorded response.',
+            instructorNotes:
+              'Awaiting examiner evaluation of recorded response.',
           },
         });
       }
@@ -305,7 +444,8 @@ export class AttemptsService {
     return {
       attemptId,
       status: AttemptStatus.NEEDS_REVIEW,
-      message: 'Recording submitted. A certified examiner will evaluate your response.',
+      message:
+        'Recording submitted. A certified examiner will evaluate your response.',
     };
   }
 
@@ -325,7 +465,8 @@ export class AttemptsService {
         !latestRun ||
         latestRun.status === 'FAILED' ||
         (latestRun.status === 'RUNNING' &&
-          Date.now() - latestRun.createdAt.getTime() > AttemptsService.STALE_RUN_MS);
+          Date.now() - latestRun.createdAt.getTime() >
+            AttemptsService.STALE_RUN_MS);
       if (!runIsStale) {
         throw new ConflictException(
           'Scoring is currently in progress for this attempt. Please wait for it to finish.',
@@ -333,23 +474,52 @@ export class AttemptsService {
       }
       await this.prisma.agentRun.updateMany({
         where: { id: latestRun?.id ?? '', status: 'RUNNING' },
-        data: { status: 'FAILED', error: 'Run timed out and was released for retry' },
+        data: {
+          status: 'FAILED',
+          error: 'Run timed out and was released for retry',
+        },
       });
+    } else if (attempt.status === AttemptStatus.COMPLETED) {
+      // A COMPLETED attempt without any score row is a grading gap (e.g. the
+      // scorer crashed post-transition) — allow the student to re-drive it.
+      // COMPLETED *with* a score is final and must not be overwritten here.
+      const scoreCount = await this.prisma.score.count({
+        where: { attemptId },
+      });
+      if (scoreCount > 0) {
+        throw new ConflictException('Attempt is COMPLETED and already scored');
+      }
     } else if (attempt.status !== AttemptStatus.SUBMITTED) {
       throw new ConflictException(
-        `Attempt is ${attempt.status}; only SUBMITTED or stuck SCORING attempts can be re-scored`,
+        `Attempt is ${attempt.status}; only SUBMITTED, stuck SCORING, or score-less COMPLETED attempts can be re-scored`,
       );
     }
+    // Grade against the attempt's question snapshot — the exact set this user
+    // was served — never the whole (possibly larger) adaptive pool.
+    const snapshotIds = Array.isArray(attempt.questionIdsJson)
+      ? (attempt.questionIdsJson as string[])
+      : null;
     const questions = await this.prisma.question.findMany({
-      where: { testSetId: attempt.testSetId },
+      where: {
+        testSetId: attempt.testSetId,
+        ...(snapshotIds ? { id: { in: snapshotIds } } : {}),
+      },
       orderBy: { orderIndex: 'asc' },
     });
     const answers = (attempt.answersJson as Record<string, string>) ?? {};
     if (attempt.testSet.skill === SkillType.WRITING) {
       return this.scoreWriting(attempt, questions, answers);
     }
-    if (attempt.testSet.skill === SkillType.LISTENING || attempt.testSet.skill === SkillType.READING) {
-      return this.autoGrade(attemptId, attempt.testSet.skill, questions, answers);
+    if (
+      attempt.testSet.skill === SkillType.LISTENING ||
+      attempt.testSet.skill === SkillType.READING
+    ) {
+      return this.autoGrade(
+        attemptId,
+        attempt.testSet.skill,
+        questions,
+        answers,
+      );
     }
     if (attempt.testSet.skill === SkillType.SPEAKING) {
       return this.routeSpeakingToReview(attemptId, questions, answers);
@@ -364,7 +534,14 @@ export class AttemptsService {
       where: { userId },
       orderBy: { startedAt: 'desc' },
       include: {
-        testSet: { select: { id: true, title: true, skill: true, timeLimitMinutes: true } },
+        testSet: {
+          select: {
+            id: true,
+            title: true,
+            skill: true,
+            timeLimitMinutes: true,
+          },
+        },
         scores: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
       take: 100,
@@ -380,7 +557,9 @@ export class AttemptsService {
   }
 
   async getResult(userId: string, userRole: string, attemptId: string) {
-    const isPrivileged = ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(userRole);
+    const isPrivileged = ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(
+      userRole,
+    );
     const attempt = await this.prisma.attempt.findUnique({
       where: { id: attemptId },
       include: {
@@ -444,13 +623,20 @@ export class AttemptsService {
     }
     const bands: Partial<Record<SkillType, number>> = {};
     latest.forEach((band, skill) => (bands[skill] = band));
-    const fourSkills = [SkillType.LISTENING, SkillType.READING, SkillType.WRITING, SkillType.SPEAKING]
+    const fourSkills = [
+      SkillType.LISTENING,
+      SkillType.READING,
+      SkillType.WRITING,
+      SkillType.SPEAKING,
+    ]
       .map((s) => latest.get(s))
       .filter((b): b is number => typeof b === 'number');
     return { perSkill: bands, overall: overallBandOf(fourSkills) };
   }
 
-  private extractPrimaryAnswer(answersJson: Prisma.JsonValue | null): string | null {
+  private extractPrimaryAnswer(
+    answersJson: Prisma.JsonValue | null,
+  ): string | null {
     if (!answersJson || typeof answersJson !== 'object') return null;
     const values = Object.values(answersJson as Record<string, unknown>);
     const longestText = values
@@ -459,7 +645,11 @@ export class AttemptsService {
     return longestText ?? null;
   }
 
-  private async getOwnedAttempt(userId: string, attemptId: string, includeTestSet = false) {
+  private async getOwnedAttempt(
+    userId: string,
+    attemptId: string,
+    includeTestSet = false,
+  ) {
     const attempt = await this.prisma.attempt.findUnique({
       where: { id: attemptId },
       include: { testSet: includeTestSet },

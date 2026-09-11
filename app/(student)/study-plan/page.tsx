@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useMemo, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircle,
   CheckCircle2,
@@ -99,6 +99,13 @@ export default function StudyPlanPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const saveSuccessTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (saveSuccessTimer.current) clearTimeout(saveSuccessTimer.current)
+    }
+  }, [])
 
   const completed = useMemo(() => plan.filter((m) => m.isCompleted).length, [plan])
   const progressPct = plan.length > 0 ? Math.round((completed / plan.length) * 100) : 0
@@ -132,7 +139,8 @@ export default function StudyPlanPage() {
         return false
       }
       setSaveSuccess(true)
-      setTimeout(() => setSaveSuccess(false), 2500)
+      if (saveSuccessTimer.current) clearTimeout(saveSuccessTimer.current)
+      saveSuccessTimer.current = setTimeout(() => setSaveSuccess(false), 2500)
       return true
     } finally {
       setSaving(false)
@@ -161,6 +169,10 @@ export default function StudyPlanPage() {
   }
 
   const handleToggle = async (id: string) => {
+    // Toggling is disabled while a save is in flight (see the button below),
+    // so `next` is always computed from settled state and the closure rollback
+    // can never revert a newer, unrelated toggle.
+    if (saving) return
     const next = plan.map((m) => (m.id === id ? { ...m, isCompleted: !m.isCompleted } : m))
     setPlan(next) // optimistic
     const ok = await persist({ studyPlan: next })
@@ -316,9 +328,14 @@ export default function StudyPlanPage() {
                   <button
                     type="button"
                     onClick={() => void handleToggle(milestone.id)}
+                    disabled={saving}
                     aria-pressed={milestone.isCompleted}
-                    aria-label={`${milestone.isCompleted ? "Mark" : "Complete"} milestone: ${milestone.title}`}
-                    className="mt-0.5 shrink-0 text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                    aria-label={
+                      milestone.isCompleted
+                        ? `Mark milestone as not done: ${milestone.title}`
+                        : `Mark milestone as complete: ${milestone.title}`
+                    }
+                    className="mt-0.5 shrink-0 text-muted-foreground hover:text-primary transition-colors cursor-pointer disabled:pointer-events-none disabled:opacity-60"
                   >
                     {milestone.isCompleted ? (
                       <CheckCircle2 className="h-5 w-5 text-success" aria-hidden />

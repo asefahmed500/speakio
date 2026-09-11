@@ -41,18 +41,33 @@ function redirectToLogin() {
   window.location.assign(`/login?next=${next}`)
 }
 
-/**
- * Performs an API request. Never throws for HTTP/network failures — callers
- * receive a discriminated result so loading / error / empty states can be
- * rendered deliberately.
- *
- * Auth expiry is centralized here: a 401 on a non-auth endpoint redirects to
- * /login?next=… (full reload, clearing stale client state). Pass
- * `timeoutMs: 0` for long-running calls such as exam submit or scoring.
- */
-export async function apiFetch<T>(
+// Single-flight silent refresh: concurrent 401s share one /auth/refresh call
+// and one retry each, instead of stampeding the endpoint.
+let refreshInFlight: Promise<boolean> | null = null
+
+function tryRefreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch(`${API_URL}/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        })
+        return res.ok
+      } catch {
+        return false
+      } finally {
+        refreshInFlight = null
+      }
+    })()
+  }
+  return refreshInFlight
+}
+
+async function request<T>(
   path: string,
-  init: RequestInit & { json?: unknown; timeoutMs?: number } = {},
+  init: RequestInit & { json?: unknown; timeoutMs?: number },
+  allowRefresh: boolean
 ): Promise<ApiResult<T>> {
   const { json, headers, timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = init
   const signal =
@@ -84,9 +99,13 @@ export async function apiFetch<T>(
         429: "Too many requests. Please wait a moment and try again.",
         500: "Something went wrong on our side. Please try again.",
       }
-      // Centralized session-expiry handling. Auth endpoints (login/register/me)
-      // render their own 401 states and must not trigger a redirect.
+      // Centralized session-expiry handling: try one silent refresh before
+      // giving up. Auth endpoints (login/register/me/refresh) render their
+      // own 401 states and must not trigger a redirect.
       if (res.status === 401 && !path.startsWith("/auth/")) {
+        if (allowRefresh && (await tryRefreshSession())) {
+          return request<T>(path, init, false)
+        }
         redirectToLogin()
       }
       return {
@@ -124,4 +143,22 @@ export async function apiFetch<T>(
       networkError: true,
     }
   }
+}
+
+/**
+ * Performs an API request. Never throws for HTTP/network failures — callers
+ * receive a discriminated result so loading / error / empty states can be
+ * rendered deliberately.
+ *
+ * Auth expiry is centralized here: a 401 on a non-auth endpoint triggers one
+ * silent POST /auth/refresh + retry; only if that fails does the caller get
+ * the 401 and the full-page redirect to /login?next=… (clearing stale client
+ * state). Pass `timeoutMs: 0` for long-running calls such as exam submit or
+ * scoring.
+ */
+export async function apiFetch<T>(
+  path: string,
+  init: RequestInit & { json?: unknown; timeoutMs?: number } = {}
+): Promise<ApiResult<T>> {
+  return request<T>(path, init, true)
 }

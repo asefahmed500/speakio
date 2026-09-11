@@ -14,11 +14,15 @@ async function verifyZaiConnection() {
   console.log(`========================================`);
   console.log(`Endpoint : ${baseURL}`);
   console.log(`Model    : ${model}`);
-  console.log(`API Key  : ${apiKey ? apiKey.substring(0, 6) + '...' + apiKey.slice(-4) : 'NOT_SET'}`);
+  console.log(
+    `API Key  : ${apiKey ? apiKey.substring(0, 6) + '...' + apiKey.slice(-4) : 'NOT_SET'}`,
+  );
 
   if (!apiKey || apiKey === 'dummy_key') {
     console.log(`\n[INFO] ZAI_API_KEY is not yet populated in .env.`);
-    console.log(`When you provide your Z.AI API key, place it in backend/.env:`);
+    console.log(
+      `When you provide your Z.AI API key, place it in backend/.env:`,
+    );
     console.log(`ZAI_API_KEY="your_actual_key_here"`);
     console.log(`========================================\n`);
     return;
@@ -37,7 +41,8 @@ async function verifyZaiConnection() {
       messages: [
         {
           role: 'system',
-          content: 'You are the Speakio AI Diagnostic Agent. Return valid JSON only: {"status": "connected", "provider": "Z.AI GLM"}',
+          content:
+            'You are the Speakio AI Diagnostic Agent. Return valid JSON only: {"status": "connected", "provider": "Z.AI GLM"}',
         },
         { role: 'user', content: 'Ping' },
       ],

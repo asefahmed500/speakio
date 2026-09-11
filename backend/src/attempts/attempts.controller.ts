@@ -1,10 +1,25 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards, Req, UnauthorizedException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Logger,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+  Req,
+  UnauthorizedException,
+  forwardRef,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { z } from 'zod';
 import { AttemptsService } from './attempts.service';
+import { CertificatesService } from '../certificates/certificates.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
 
 // Text answers are short; speaking answers arrive as base64 data URLs sized
 // for the service's 6MB binary audio budget (×4/3 encoding + URL prefix).
@@ -47,28 +62,35 @@ const submitSchema = z.object({
 @Controller('attempts')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AttemptsController {
-  constructor(private readonly attemptsService: AttemptsService) {}
+  private readonly logger = new Logger(AttemptsController.name);
 
-  private userId(req: any): string {
-    if (!req?.user?.sub) throw new UnauthorizedException('User context missing');
+  constructor(
+    private readonly attemptsService: AttemptsService,
+    @Inject(forwardRef(() => CertificatesService))
+    private readonly certificatesService: CertificatesService,
+  ) {}
+
+  private userId(req: AuthenticatedRequest): string {
+    if (!req?.user?.sub)
+      throw new UnauthorizedException('User context missing');
     return req.user.sub;
   }
 
   @Post()
   async start(
     @Body(new ZodValidationPipe(startSchema)) body: z.infer<typeof startSchema>,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.attemptsService.start(this.userId(req), body.testSetId);
   }
 
   @Get()
-  async listMine(@Req() req: any) {
+  async listMine(@Req() req: AuthenticatedRequest) {
     return this.attemptsService.listMine(this.userId(req));
   }
 
   @Get(':id')
-  async getResult(@Param('id') id: string, @Req() req: any) {
+  async getResult(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.attemptsService.getResult(this.userId(req), req.user.role, id);
   }
 
@@ -76,10 +98,16 @@ export class AttemptsController {
   @Patch(':id')
   async autosave(
     @Param('id') id: string,
-    @Body(new ZodValidationPipe(autosaveSchema)) body: z.infer<typeof autosaveSchema>,
-    @Req() req: any,
+    @Body(new ZodValidationPipe(autosaveSchema))
+    body: z.infer<typeof autosaveSchema>,
+    @Req() req: AuthenticatedRequest,
   ) {
-    await this.attemptsService.autosave(this.userId(req), id, body.answers, body.timeRemainingSeconds);
+    await this.attemptsService.autosave(
+      this.userId(req),
+      id,
+      body.answers,
+      body.timeRemainingSeconds,
+    );
     return { saved: true };
   }
 
@@ -87,15 +115,34 @@ export class AttemptsController {
   @Post(':id/submit')
   async submit(
     @Param('id') id: string,
-    @Body(new ZodValidationPipe(submitSchema)) body: z.infer<typeof submitSchema>,
-    @Req() req: any,
+    @Body(new ZodValidationPipe(submitSchema))
+    body: z.infer<typeof submitSchema>,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.attemptsService.submit(this.userId(req), id, body.answers, body.timeRemainingSeconds);
+    const result = await this.attemptsService.submit(
+      this.userId(req),
+      id,
+      body.answers,
+      body.timeRemainingSeconds,
+    );
+    // Milestone hook: the moment any skill completes, the backend (never the
+    // client) decides whether all four are done and issues the certificate.
+    // Fire-and-forget — issuance must never block or fail the submission.
+    void this.certificatesService
+      .issue(this.userId(req))
+      .catch((error: unknown) => {
+        // Silent swallowing made issuance failures invisible; log them so
+        // missing certificates can be diagnosed.
+        this.logger.error(
+          `Background certificate issuance failed for user ${this.userId(req)}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    return result;
   }
 
   @Throttle({ default: { limit: 6, ttl: 60_000 } })
   @Post(':id/rescore')
-  async rescore(@Param('id') id: string, @Req() req: any) {
+  async rescore(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.attemptsService.rescore(this.userId(req), id);
   }
 }

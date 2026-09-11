@@ -5,9 +5,14 @@ import { AiService } from './ai.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
 
 const paraphraseSchema = z.object({
-  text: z.string().trim().min(10, 'Provide at least a sentence to paraphrase').max(2000),
+  text: z
+    .string()
+    .trim()
+    .min(10, 'Provide at least a sentence to paraphrase')
+    .max(2000),
 });
 
 @Controller('ai')
@@ -18,10 +23,13 @@ export class AiController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('paraphrase')
   async paraphrase(
-    @Body(new ZodValidationPipe(paraphraseSchema)) body: z.infer<typeof paraphraseSchema>,
-    @Req() req: any,
+    @Body(new ZodValidationPipe(paraphraseSchema))
+    body: z.infer<typeof paraphraseSchema>,
+    @Req() req: AuthenticatedRequest,
   ) {
-    const { data } = await this.aiService.executeStructuredTask<{ rewrites: string[] }>({
+    const { data } = await this.aiService.executeStructuredTask<{
+      rewrites: string[];
+    }>({
       taskType: 'COACH_ADVISOR',
       responseFormat: { type: 'json_object' },
       messages: [
@@ -36,7 +44,12 @@ export class AiController {
       validator: (raw: unknown) => {
         const parsed = raw as { rewrites?: unknown };
         const rewrites = Array.isArray(parsed?.rewrites)
-          ? parsed.rewrites.filter((r): r is string => typeof r === 'string' && r.trim().length > 0).slice(0, 3)
+          ? parsed.rewrites
+              .filter(
+                (r): r is string =>
+                  typeof r === 'string' && r.trim().length > 0,
+              )
+              .slice(0, 3)
           : [];
         if (rewrites.length === 0) {
           throw new Error('Model returned no usable rewrites');

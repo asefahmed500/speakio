@@ -12,6 +12,9 @@ interface AuthUiState {
  * Small persisted store for cross-page auth UX state.
  * Form field state itself stays in react-hook-form; this only carries
  * state that must survive navigation between /login and /register.
+ *
+ * `skipHydration` keeps the SSR render (empty draft) in sync with the
+ * hydration render — pages rehydrate in an effect after mount.
  */
 export const useAuthUiStore = create<AuthUiState>()(
   persist(
@@ -20,6 +23,6 @@ export const useAuthUiStore = create<AuthUiState>()(
       setEmailDraft: (email) => set({ emailDraft: email }),
       clearEmailDraft: () => set({ emailDraft: "" }),
     }),
-    { name: "speakio.auth-ui" }
+    { name: "speakio.auth-ui", skipHydration: true }
   )
 )

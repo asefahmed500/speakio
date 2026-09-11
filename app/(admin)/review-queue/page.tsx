@@ -5,7 +5,9 @@ import Link from "next/link"
 import { AlertCircle, ArrowLeft, Check, Loader2 } from "lucide-react"
 import { Button, ButtonLink } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { useSessionUser } from "@/components/user-session-provider"
 import { apiFetch } from "@/lib/api-client"
+import { isAdmin } from "@/lib/user"
 
 interface ReviewItem {
   id: string
@@ -38,6 +40,7 @@ function extractAnswer(answersJson: Record<string, string> | null): { text: stri
 }
 
 export default function ReviewQueuePage() {
+  const sessionUser = useSessionUser()
   const [items, setItems] = useState<ReviewItem[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -55,6 +58,7 @@ export default function ReviewQueuePage() {
       setItems(null)
     } else {
       setItems(data)
+      setError(null)
       setSelectedBand(data[0]?.proposedBand ?? null)
       setNotes("")
       setResolvedInfo(null)
@@ -115,9 +119,13 @@ export default function ReviewQueuePage() {
               {loading ? "Loading…" : `${items?.length ?? 0} pending`}
             </p>
           </div>
-          <ButtonLink variant="outline" size="sm" className="cursor-pointer" href="/agent-ops">
+          {/* Agent Ops is ADMIN-only; linking it for INSTRUCTORs would just
+              bounce them back to /dashboard. */}
+          {isAdmin(sessionUser.role) && (
+            <ButtonLink variant="outline" size="sm" className="cursor-pointer" href="/agent-ops">
               <ArrowLeft className="mr-2 h-3.5 w-3.5" aria-hidden /> Agent Ops
             </ButtonLink>
+          )}
         </div>
 
         {loading && (

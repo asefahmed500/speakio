@@ -20,7 +20,12 @@ async function testScoringAndReviewQueueFlow() {
   });
 
   const instructorToken = jwt.sign(
-    { sub: instructor.id, email: instructor.email, role: instructor.role, name: instructor.name },
+    {
+      sub: instructor.id,
+      email: instructor.email,
+      role: instructor.role,
+      name: instructor.name,
+    },
     process.env.JWT_SECRET || 'speakio_jwt_secure_secret_key_2026_production',
     { expiresIn: '1h' },
   );
@@ -40,7 +45,9 @@ async function testScoringAndReviewQueueFlow() {
       userId: instructor.id,
       testSetId: testSet.id,
       status: 'NEEDS_REVIEW',
-      answersJson: { essay: 'A comprehensive academic essay on urban sustainability...' },
+      answersJson: {
+        essay: 'A comprehensive academic essay on urban sustainability...',
+      },
     },
   });
 
@@ -51,7 +58,8 @@ async function testScoringAndReviewQueueFlow() {
       skill: 'WRITING',
       proposedBand: 6.5,
       status: 'PENDING',
-      instructorNotes: 'Confidence score: 0.79 below threshold. Borderline coherence.',
+      instructorNotes:
+        'Confidence score: 0.79 below threshold. Borderline coherence.',
     },
   });
 
@@ -71,20 +79,26 @@ async function testScoringAndReviewQueueFlow() {
   console.log(`Found ${queueData.length} pending item(s) in review queue.`);
 
   // 5. Resolve Review Queue Item (Override to Band 7.5)
-  const resolveRes = await fetch(`http://localhost:4000/scoring/review-queue/${queueItem.id}/resolve`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Cookie: `access_token=${instructorToken}`,
+  const resolveRes = await fetch(
+    `http://localhost:4000/scoring/review-queue/${queueItem.id}/resolve`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: `access_token=${instructorToken}`,
+      },
+      body: JSON.stringify({
+        action: 'OVERRIDE',
+        finalBand: 7.5,
+        instructorNotes:
+          'Verified and upgraded to Band 7.5 after reviewing lexical variety.',
+      }),
     },
-    body: JSON.stringify({
-      action: 'OVERRIDE',
-      finalBand: 7.5,
-      instructorNotes: 'Verified and upgraded to Band 7.5 after reviewing lexical variety.',
-    }),
-  });
+  );
 
-  console.log(`POST /scoring/review-queue/:id/resolve status: ${resolveRes.status}`);
+  console.log(
+    `POST /scoring/review-queue/:id/resolve status: ${resolveRes.status}`,
+  );
   const resolveData = await resolveRes.json();
   console.log('Resolved Queue Result:', resolveData);
 
@@ -94,8 +108,14 @@ async function testScoringAndReviewQueueFlow() {
   });
   console.log('Final Score Recorded in DB:', verifiedScore);
 
-  if (verifiedScore && verifiedScore.bandScore === 7.5 && verifiedScore.scoredBy === 'INSTRUCTOR') {
-    console.log('\n[SUCCESS] Scoring, Review Queue, and Instructor Override flow fully working!');
+  if (
+    verifiedScore &&
+    verifiedScore.bandScore === 7.5 &&
+    verifiedScore.scoredBy === 'INSTRUCTOR'
+  ) {
+    console.log(
+      '\n[SUCCESS] Scoring, Review Queue, and Instructor Override flow fully working!',
+    );
   } else {
     console.error('\n[FAILURE] Scoring flow verification failed.');
   }

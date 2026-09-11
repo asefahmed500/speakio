@@ -23,7 +23,7 @@ export function proxy(request: NextRequest) {
   const hasSessionCookie = request.cookies.has("access_token")
 
   const isProtected = PROTECTED_PREFIXES.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(`${p === "/test" ? "/test/" : p}`),
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
   )
 
   if (isProtected && !hasSessionCookie) {

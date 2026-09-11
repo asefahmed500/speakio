@@ -72,6 +72,7 @@ export default function DashboardPage() {
       setStats(null)
     } else {
       setStats(data)
+      setError(null)
     }
     setLoading(false)
   }, [])
@@ -93,7 +94,8 @@ export default function DashboardPage() {
   }
 
   const firstName = user.name.split(" ")[0]
-  const hasAnyData = stats != null && stats.totals.attempts > 0
+  const hasAnyData =
+    stats != null && (stats.totals.attempts > 0 || stats.totals.milestonesTotal > 0)
 
   return (
     <div className="flex-1 bg-surface-subtle">

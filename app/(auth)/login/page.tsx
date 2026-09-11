@@ -45,16 +45,26 @@ function LoginForm() {
   const searchParams = useSearchParams()
   const [serverError, setServerError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
-  const { emailDraft, setEmailDraft, clearEmailDraft } = useAuthUiStore()
+  const setEmailDraft = useAuthUiStore((s) => s.setEmailDraft)
+  const clearEmailDraft = useAuthUiStore((s) => s.clearEmailDraft)
 
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: emailDraft, password: "" },
+    defaultValues: { email: "", password: "" },
   })
+
+  // The persisted draft rehydrates after mount so SSR and the hydration
+  // render agree — prefilling during render would mismatch the server HTML.
+  React.useEffect(() => {
+    void useAuthUiStore.persist.rehydrate()
+    const draft = useAuthUiStore.getState().emailDraft
+    if (draft) setValue("email", draft)
+  }, [setValue])
 
   const nextPath = searchParams.get("next")
 
@@ -141,7 +151,7 @@ function LoginForm() {
                   Password
                 </label>
                 {/* Password reset is handled by support in v1. */}
-                <span className="text-[11px] text-muted-foreground">Minimum 6 characters</span>
+                <span className="text-[11px] text-muted-foreground">Minimum 8 characters</span>
               </div>
               <div className="relative">
                 <Input

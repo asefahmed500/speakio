@@ -1,7 +1,13 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Role } from '@prisma/client';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+import type { AuthenticatedRequest } from '../authenticated-request';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -15,14 +21,19 @@ export class RolesGuard implements CanActivate {
     if (!requiredRoles) {
       return true;
     }
-    const { user } = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const user = request.user;
     if (!user || !user.role) {
       throw new ForbiddenException('User context missing or unauthenticated');
     }
 
-    const hasRole = requiredRoles.includes(user.role);
+    // The role string was signed by our own auth service — casting to the
+    // enum here is safe and keeps the comparison honest.
+    const hasRole = requiredRoles.includes(user.role as Role);
     if (!hasRole) {
-      throw new ForbiddenException(`User requires role: ${requiredRoles.join(' or ')}`);
+      throw new ForbiddenException(
+        `User requires role: ${requiredRoles.join(' or ')}`,
+      );
     }
     return true;
   }

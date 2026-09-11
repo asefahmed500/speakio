@@ -37,6 +37,9 @@ export default function CertificatesPage() {
   const [revokingId, setRevokingId] = useState<string | null>(null)
   const [issuing, setIssuing] = useState(false)
   const [issueError, setIssueError] = useState<string | null>(null)
+  // Download/revoke failures must not clobber the list-fetch error state —
+  // the top-level error's "Retry" button refetches the list, not the action.
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const fetchCertificates = useCallback(async () => {
     const { data, error: fetchError } = await apiFetch<Certificate[]>("/certificates")
@@ -45,6 +48,7 @@ export default function CertificatesPage() {
       setCertificates(null)
     } else {
       setCertificates(data)
+      setError(null)
     }
     setLoading(false)
   }, [])
@@ -79,13 +83,13 @@ export default function CertificatesPage() {
 
   const handleDownload = async (cert: Certificate) => {
     setDownloadingId(cert.id)
-    setError(null)
+    setActionError(null)
     try {
       const res = await fetch(`${API_URL}/certificates/${cert.id}/pdf`, {
         credentials: "include",
       })
       if (!res.ok) {
-        setError(
+        setActionError(
           res.status === 409
             ? "PDF download is unavailable for revoked certificates."
             : "Failed to generate the PDF. Please try again.",
@@ -102,7 +106,7 @@ export default function CertificatesPage() {
       link.remove()
       URL.revokeObjectURL(url)
     } catch {
-      setError("The download was interrupted. Please check your connection and try again.")
+      setActionError("The download was interrupted. Please check your connection and try again.")
     } finally {
       setDownloadingId(null)
     }
@@ -110,13 +114,13 @@ export default function CertificatesPage() {
 
   const handleConfirmRevoke = async () => {
     if (!revokingId) return
-    setError(null)
+    setActionError(null)
     const { error: revokeError } = await apiFetch(`/certificates/${revokingId}/revoke`, {
       method: "POST",
       json: { reason: "Revoked by holder" },
     })
     if (revokeError) {
-      setError(revokeError.message)
+      setActionError(revokeError.message)
     } else {
       await fetchCertificates()
     }
@@ -199,14 +203,20 @@ export default function CertificatesPage() {
                 {issueError}
               </p>
             )}
+            {actionError && (
+              <p role="alert" className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
+                {actionError}
+              </p>
+            )}
 
             {certificates.map((cert) => {
               const isRevoked = cert.status !== "ACTIVE"
               return (
                 <div
                   key={cert.id}
-                  className="rounded-xl border border-border bg-card p-5 space-y-4"
+                  role="group"
                   aria-label={`Certificate ${cert.certificateNumber}`}
+                  className="rounded-xl border border-border bg-card p-5 space-y-4"
                 >
                   <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                     <div className="flex items-start gap-3">

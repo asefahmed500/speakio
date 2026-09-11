@@ -36,3 +36,7 @@ export type SessionResult =
 export function isStaff(role: SessionUser["role"]): boolean {
   return role === "INSTRUCTOR" || role === "ADMIN" || role === "SUPER_ADMIN"
 }
+
+export function isAdmin(role: SessionUser["role"]): boolean {
+  return role === "ADMIN" || role === "SUPER_ADMIN"
+}
