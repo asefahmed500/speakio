@@ -1,0 +1,14 @@
+{
+  // Speakio web frontend — Next.js 16 served by an OpenNext Worker with
+  // Workers Static Assets. Deploy: npm run cf:deploy
+  "name": "speakio-web",
+  "main": ".open-next/worker.js",
+  "assets": {
+    "directory": ".open-next/assets"
+  },
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": {
+    "enabled": true
+  }
+}

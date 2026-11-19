@@ -5,10 +5,9 @@ export const loginSchema = z.object({
     .string()
     .min(1, "Email address is required")
     .email("Please enter a valid email address (e.g. candidate@example.com)"),
-  // Mirrors the registration minimum so the hint and enforcement agree.
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters"),
+  // Login only checks presence — legacy accounts may predate the 8-char
+  // minimum, and password policy belongs to register/change flows.
+  password: z.string().min(1, "Password is required"),
 })
 
 export type LoginFormData = z.infer<typeof loginSchema>
@@ -28,7 +27,7 @@ export const registerSchema = z.object({
     .max(128, "Password is too long"),
   targetBand: z
     .number({ message: "Target band is required" })
-    .min(5.0, "Minimum IELTS target band is 5.0")
+    .min(4.0, "Minimum IELTS target band is 4.0")
     .max(9.0, "Maximum IELTS band is 9.0")
     .refine((val) => (val * 2) % 1 === 0, {
       message: "Target band must be in 0.5 increments (e.g. 6.5, 7.0, 7.5, 8.0)",

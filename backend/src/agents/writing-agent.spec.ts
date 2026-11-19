@@ -133,45 +133,59 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
         questionPrompt: 'Discuss both views and give your opinion.',
         taskType: 'TASK_2',
         studentEssay: 'This is a well-structured academic response...',
-        userContext: { userId: 'student-123', role: 'STUDENT' },
+        userContext: { userId: 'user-123', role: 'USER' },
       });
 
       expect(result.status).toBe('COMPLETED');
       expect(result.scoreId).toBe('mock-score-1');
       expect(mockPrisma.score.upsert).toHaveBeenCalled();
-      expect(mockPrisma.reviewQueueItem.create).not.toHaveBeenCalled();
+      // Single pass still records an audit decision for the admin monitor.
+      const createMock = mockPrisma.reviewQueueItem.create as jest.Mock<
+        unknown,
+        [{ data?: { status?: string } }]
+      >;
+      expect(createMock.mock.calls.length).toBeGreaterThan(0);
+      const firstArg = createMock.mock.calls[0]?.[0];
+      expect(firstArg?.data?.status).toBe('AI_APPROVED');
     });
 
-    it('should route to Review Queue when confidence < 0.85', async () => {
-      mockGraph.mockResolvedValueOnce(graphResult(0.74, 'REVIEW'));
+    it('should run a second AI review pass when confidence < 0.85 and publish the combined result', async () => {
+      mockGraph
+        .mockResolvedValueOnce(graphResult(0.74, 'REVIEW'))
+        .mockResolvedValueOnce(graphResult(0.92, 'PUBLISH'));
 
       const result = await agent.scoreEssay({
         attemptId: 'att-102',
         questionPrompt: 'Discuss both views.',
         taskType: 'TASK_2',
         studentEssay: 'Sample essay with edge-case rubric application.',
-        userContext: { userId: 'student-123', role: 'STUDENT' },
+        userContext: { userId: 'user-123', role: 'USER' },
       });
 
-      expect(result.status).toBe('WAITING_FOR_APPROVAL');
-      expect(result.scoreId).toBeNull();
+      // No human queue: the AI review agent converges and publishes.
+      expect(result.status).toBe('COMPLETED');
+      expect(result.scoreId).not.toBeNull();
+      expect(mockPrisma.score.upsert).toHaveBeenCalled();
+      // Audit trail entry is recorded for the admin monitor.
       expect(mockPrisma.reviewQueueItem.create).toHaveBeenCalled();
     });
   });
 
   describe('Tool Registry Security & Permissions', () => {
-    it('should not reopen a review item an examiner has already resolved', async () => {
+    it('should never rewrite an admin-overridden review decision', async () => {
       mockPrisma.reviewQueueItem.findUnique.mockResolvedValueOnce({
-        id: 'rq-resolved',
+        id: 'rq-overridden',
         attemptId: 'att-102',
-        status: 'APPROVED',
+        status: 'OVERRIDDEN',
       });
       await toolRegistry.executeTool(
-        'flagForInstructorReview',
+        'recordReviewDecision',
         {
           attemptId: 'att-102',
           skill: 'WRITING',
           proposedBand: 6.0,
+          finalBand: 6.5,
+          status: 'AI_APPROVED',
           notes: 'retry',
         },
         { userId: 'system', role: 'SYSTEM_ATTEMPT' },
@@ -180,12 +194,12 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
       expect(mockPrisma.reviewQueueItem.create).not.toHaveBeenCalled();
     });
 
-    it('should prohibit student from accessing another candidate submission', async () => {
+    it('should prohibit a user from accessing another candidate submission', async () => {
       await expect(
         toolRegistry.executeTool(
           'getAttemptSubmission',
           { attemptId: 'mock-attempt-1' },
-          { userId: 'other-student-999', role: 'STUDENT' },
+          { userId: 'other-user-999', role: 'USER' },
         ),
       ).rejects.toThrow(ForbiddenException);
     });

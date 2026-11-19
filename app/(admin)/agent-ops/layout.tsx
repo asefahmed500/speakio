@@ -3,8 +3,8 @@ import { redirect } from "next/navigation"
 import { getSessionUser, isAdmin } from "@/lib/session"
 
 /**
- * Agent Ops APIs require ADMIN/SUPER_ADMIN — keep the page-level guard in
- * sync so INSTRUCTORs are redirected instead of landing on a 403 error page.
+ * Agent Ops APIs require ADMIN — keep the page-level guard in sync so USERs
+ * are redirected instead of landing on a 403 error page.
  */
 export default async function AgentOpsLayout({
   children,
@@ -18,7 +18,7 @@ export default async function AgentOpsLayout({
   }
   if (session.status === "backend_unreachable") {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
+      <div className="min-h-0 flex items-center justify-center p-6">
         <div className="max-w-md text-center space-y-3">
           <h1 className="text-xl font-semibold">Service unavailable</h1>
           <p className="text-sm text-muted-foreground">

@@ -15,6 +15,8 @@ export interface ConfirmationModalProps {
   cancelLabel?: string
   isSubmitting?: boolean
   details?: React.ReactNode
+  /** Operation error, shown inside the dialog so the user can retry in place. */
+  error?: string | null
   onConfirm: () => void | Promise<void>
   onCancel: () => void
 }
@@ -28,13 +30,51 @@ export function ConfirmationModal({
   cancelLabel = "Cancel",
   isSubmitting = false,
   details,
+  error = null,
   onConfirm,
   onCancel,
 }: ConfirmationModalProps) {
+  const uid = React.useId()
+  const titleId = `${uid}-title`
+  const descId = `${uid}-desc`
+  const panelRef = React.useRef<HTMLDivElement | null>(null)
+  const returnFocusRef = React.useRef<HTMLElement | null>(null)
+  const [busy, setBusy] = React.useState(false)
+  const working = isSubmitting || busy
+
+  React.useEffect(() => {
+    if (!isOpen) return
+    returnFocusRef.current = document.activeElement as HTMLElement | null
+    // Focus the safe (Cancel) action first for destructive confirmations.
+    const panel = panelRef.current
+    panel?.querySelector<HTMLElement>('[data-modal-cancel]')?.focus()
+    return () => {
+      returnFocusRef.current?.focus()
+    }
+  }, [isOpen])
+
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen && !isSubmitting) {
+      if (!isOpen) return
+      if (e.key === "Escape" && !working) {
         onCancel()
+        return
+      }
+      if (e.key === "Tab") {
+        // Keep focus inside the dialog while it is open.
+        const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        )
+        if (!focusable || focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     if (isOpen) {
@@ -45,7 +85,17 @@ export function ConfirmationModal({
       document.body.style.overflow = "unset"
       window.removeEventListener("keydown", handleKeyDown)
     }
-  }, [isOpen, isSubmitting, onCancel])
+  }, [isOpen, working, onCancel])
+
+  const handleConfirm = async () => {
+    if (working) return
+    setBusy(true)
+    try {
+      await onConfirm()
+    } finally {
+      setBusy(false)
+    }
+  }
 
   if (!isOpen) return null
 
@@ -89,20 +139,23 @@ export function ConfirmationModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="confirmation-modal-title"
-      aria-describedby="confirmation-modal-description"
+      aria-labelledby={titleId}
+      aria-describedby={descId}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity animate-in fade-in-0 duration-150"
         onClick={() => {
-          if (!isSubmitting) onCancel()
+          if (!working) onCancel()
         }}
       />
 
       {/* Dialog Body - Strict Zero Radius, Hairline Border */}
-      <div className="relative z-50 w-full max-w-md bg-white border border-[#EDEDEA] shadow-xl p-6 transition-all animate-in zoom-in-95 duration-150">
+      <div
+        ref={panelRef}
+        className="relative z-50 w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto bg-white border border-[#EDEDEA] shadow-xl p-6 transition-all animate-in zoom-in-95 duration-150"
+      >
         <div className="flex items-start justify-between gap-4 mb-4">
           <div className="flex items-center gap-3">
             <div className={`p-2 border ${styles.badgeClass}`}>
@@ -110,7 +163,7 @@ export function ConfirmationModal({
             </div>
             <div>
               <h3
-                id="confirmation-modal-title"
+                id={titleId}
                 className="font-semibold text-base text-neutral-900 leading-tight"
               >
                 {title}
@@ -119,7 +172,7 @@ export function ConfirmationModal({
           </div>
           <button
             type="button"
-            disabled={isSubmitting}
+            disabled={working}
             onClick={onCancel}
             aria-label="Close dialog"
             className="text-neutral-400 hover:text-neutral-700 disabled:opacity-50 p-1"
@@ -129,7 +182,7 @@ export function ConfirmationModal({
         </div>
 
         <p
-          id="confirmation-modal-description"
+          id={descId}
           className="text-sm text-neutral-600 leading-relaxed mb-4"
         >
           {description}
@@ -141,11 +194,18 @@ export function ConfirmationModal({
           </div>
         )}
 
+        {error && (
+          <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {error}
+          </p>
+        )}
+
         <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#EDEDEA]">
           <Button
             type="button"
+            data-modal-cancel
             variant="outline"
-            disabled={isSubmitting}
+            disabled={working}
             onClick={onCancel}
             className="h-9 px-4 text-xs font-medium border-[#EDEDEA] text-neutral-700 hover:bg-neutral-50"
           >
@@ -154,11 +214,11 @@ export function ConfirmationModal({
 
           <Button
             type="button"
-            disabled={isSubmitting}
-            onClick={onConfirm}
+            disabled={working}
+            onClick={() => void handleConfirm()}
             className={`h-9 px-4 text-xs font-medium ${styles.confirmBtnClass}`}
           >
-            {isSubmitting ? (
+            {working ? (
               <>
                 <Loader2 className="mr-2 size-3.5 animate-spin" />
                 Processing...

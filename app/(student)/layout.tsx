@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation"
 
 import { getSessionUser } from "@/lib/session"
-import { StudentShell } from "./student-shell"
+import { AppShell } from "@/components/app/app-shell"
 
 export default async function StudentLayout({
   children,
@@ -15,7 +15,7 @@ export default async function StudentLayout({
   }
   if (session.status === "backend_unreachable") {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
+      <div className="min-h-0 flex items-center justify-center p-6">
         <div className="max-w-md text-center space-y-3">
           <h1 className="text-xl font-semibold">Service unavailable</h1>
           <p className="text-sm text-muted-foreground">
@@ -33,5 +33,5 @@ export default async function StudentLayout({
     )
   }
 
-  return <StudentShell user={session.user}>{children}</StudentShell>
+  return <AppShell user={session.user}>{children}</AppShell>
 }

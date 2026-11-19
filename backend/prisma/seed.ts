@@ -32,15 +32,32 @@ async function main() {
   }
   const passwordHash = await bcrypt.hash(seedPassword ?? 'password123', 10);
 
-  // 1. Users (one per role)
+  // 1. Users (one per role in the two-role SaaS model)
   const student = await prisma.user.upsert({
+    where: { email: 'user@speakio.com' },
+    update: { passwordHash, role: Role.USER },
+    create: {
+      email: 'user@speakio.com',
+      passwordHash,
+      name: 'Asef Ahmed',
+      role: Role.USER,
+      targetBand: 8.0,
+      subscriptionTier: 'pro',
+      dailyCommitmentMinutes: 45,
+      weakestSkill: 'WRITING',
+      examDate: new Date('2026-10-15'),
+    },
+  });
+
+  // Keep the legacy demo address working as a plain USER account.
+  await prisma.user.upsert({
     where: { email: 'student@speakio.com' },
-    update: { passwordHash },
+    update: { passwordHash, role: Role.USER },
     create: {
       email: 'student@speakio.com',
       passwordHash,
       name: 'Asef Ahmed',
-      role: Role.STUDENT,
+      role: Role.USER,
       targetBand: 8.0,
       subscriptionTier: 'pro',
       dailyCommitmentMinutes: 45,
@@ -51,21 +68,8 @@ async function main() {
 
   if (!isProduction) {
     await prisma.user.upsert({
-      where: { email: 'examiner@speakio.com' },
-      update: { passwordHash },
-      create: {
-        email: 'examiner@speakio.com',
-        passwordHash,
-        name: 'Dr. Sarah Jenkins',
-        role: Role.INSTRUCTOR,
-        targetBand: 9.0,
-        subscriptionTier: 'institution',
-      },
-    });
-
-    await prisma.user.upsert({
       where: { email: 'admin@speakio.com' },
-      update: { passwordHash },
+      update: { passwordHash, role: Role.ADMIN },
       create: {
         email: 'admin@speakio.com',
         passwordHash,
@@ -76,25 +80,23 @@ async function main() {
       },
     });
 
-    await prisma.user.upsert({
-      where: { email: 'superadmin@speakio.com' },
-      update: { passwordHash },
-      create: {
-        email: 'superadmin@speakio.com',
-        passwordHash,
-        name: 'System Architect',
-        role: Role.SUPER_ADMIN,
-        targetBand: 9.0,
-        subscriptionTier: 'institution',
-      },
+    // Former examiner/superadmin accounts collapse into the two-role model:
+    // the examiner persona is now an AI agent, so demote stale rows.
+    await prisma.user.updateMany({
+      where: { email: { in: ['examiner@speakio.com', 'superadmin@speakio.com'] } },
+      data: { role: Role.USER },
+    });
+    await prisma.user.updateMany({
+      where: { role: { notIn: [Role.USER, Role.ADMIN] } },
+      data: { role: Role.USER },
     });
 
     const passwordHint = seedPassword ? 'the SEED_PASSWORD value' : 'password123 (dev default)';
     console.log(
-      `Seeded users: student@speakio.com, examiner@speakio.com, admin@speakio.com, superadmin@speakio.com (${passwordHint})`,
+      `Seeded users: user@speakio.com (USER), admin@speakio.com (ADMIN) — ${passwordHint}`,
     );
   } else {
-    console.log('Seeded student@speakio.com only — privileged seed accounts are disabled in production.');
+    console.log('Seeded user@speakio.com only — the admin seed account is disabled in production.');
   }
 
   // 2. WRITING test set
@@ -420,7 +422,7 @@ async function main() {
   }
   // Attach the full passage to the first question only (UI renders from q1) — ensure others have it null.
 
-  // 5. SPEAKING test set (prompts; submitted attempts route to human review)
+  // 5. SPEAKING test set (prompts; submitted attempts are scored by AI agents)
   await prisma.testSet.upsert({
     where: { id: 'speaking-part2-cuecard' },
     update: {},
@@ -447,15 +449,15 @@ async function main() {
     },
   });
 
-  // 6. Demo attempt (writing, needs review) + score + review item
+  // 6. Demo attempt (writing, AI-reviewed and completed) + score + audit item
   const attempt = await prisma.attempt.upsert({
     where: { id: 'att-student-demo-1' },
-    update: {},
+    update: { status: AttemptStatus.COMPLETED },
     create: {
       id: 'att-student-demo-1',
       userId: student.id,
       testSetId: writingSet.id,
-      status: AttemptStatus.NEEDS_REVIEW,
+      status: AttemptStatus.COMPLETED,
       answersJson: {
         'c18-w-task2':
           'In contemporary education systems, there is an ongoing debate regarding whether unpaid voluntary work should be mandated for secondary school students. While some educators argue that compulsory volunteering fosters civic responsibility, others contend that mandatory participation undermines the true spirit of altruism. In this essay, I will explore both perspectives and argue that structured community service yields substantial developmental dividends when properly integrated into the curriculum.',
@@ -479,21 +481,23 @@ async function main() {
       grammaticalAccuracy: 6.0,
       confidence: 0.78,
       feedbackSummary:
-        'Strong contextual framing with cohesive paragraphing, but transitions in body paragraph 2 border on formulaic. Human review recommended due to borderline score.',
+        'Strong contextual framing with cohesive paragraphing, but transitions in body paragraph 2 border on formulaic. Two-pass AI review confirmed the borderline score.',
       scoredBy: 'AI_GLM',
     },
   });
 
   await prisma.reviewQueueItem.upsert({
     where: { id: 'rq-demo-101' },
-    update: {},
+    update: { status: 'AI_APPROVED', finalBand: 6.5 },
     create: {
       id: 'rq-demo-101',
       attemptId: attempt.id,
       skill: SkillType.WRITING,
-      status: 'PENDING',
+      status: 'AI_APPROVED',
       proposedBand: 6.5,
-      instructorNotes: 'Borderline lexical range vs cohesion. Senior examiner review required.',
+      finalBand: 6.5,
+      instructorNotes:
+        'Two-pass AI review: borderline lexical range vs cohesion; second pass confirmed 6.5 with 0.91 confidence.',
     },
   });
 

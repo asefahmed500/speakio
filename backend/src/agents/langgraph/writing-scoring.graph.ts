@@ -2,6 +2,7 @@ import { StateGraph, Annotation, END } from '@langchain/langgraph';
 import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
 import { clampToBand } from '../../common/band.utils';
+import { invokeWithBackoff } from '../../common/free-tier-backoff';
 
 /**
  * Writing Scoring Agent — LangGraph pipeline powered by Z.AI (GLM).
@@ -28,6 +29,46 @@ export interface GraphOutput {
   score: WritingScore;
   gate: 'PUBLISH' | 'REVIEW';
   steps: GraphStepLog[];
+  tokenUsage: { input: number; output: number; total: number } | null;
+}
+
+/** Best-effort token usage extraction across LangChain message shapes. */
+function extractTokenUsage(completion: unknown): {
+  input: number;
+  output: number;
+  total: number;
+} | null {
+  const msg = completion as {
+    usage_metadata?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      total_tokens?: number;
+    };
+    additional_kwargs?: {
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      };
+    };
+  };
+  const um = msg?.usage_metadata;
+  if (um && typeof um.total_tokens === 'number') {
+    return {
+      input: um.input_tokens ?? 0,
+      output: um.output_tokens ?? 0,
+      total: um.total_tokens,
+    };
+  }
+  const u = msg?.additional_kwargs?.usage;
+  if (u && typeof u.total_tokens === 'number') {
+    return {
+      input: u.prompt_tokens ?? 0,
+      output: u.completion_tokens ?? 0,
+      total: u.total_tokens,
+    };
+  }
+  return null;
 }
 
 // A type alias (not an interface) so the object is structurally assignable to
@@ -61,6 +102,11 @@ const GraphState = Annotation.Root({
   rawScore: Annotation<WritingScore | null>,
   gate: Annotation<'PUBLISH' | 'REVIEW' | null>,
   steps: Annotation<GraphStepLog[]>,
+  tokenUsage: Annotation<{
+    input: number;
+    output: number;
+    total: number;
+  } | null>,
   error: Annotation<string | null>,
 });
 
@@ -132,7 +178,7 @@ function buildModel() {
   return new ChatOpenAI({
     apiKey,
     temperature: 0.1,
-    modelName: process.env.ZAI_MODEL_REASONING ?? 'glm-5',
+    modelName: process.env.ZAI_MODEL_REASONING ?? 'glm-4.7-flash',
     configuration: {
       // Same default as ZaiProvider — one env contract for the same provider.
       baseURL: process.env.ZAI_BASE_URL || 'https://api.z.ai/api/paas/v4',
@@ -140,7 +186,7 @@ function buildModel() {
     // A hung LLM call must never block the HTTP request indefinitely; without
     // these the attempt sits SCORING until the 5-minute staleness recovery.
     timeout: 90_000,
-    maxRetries: 1,
+    maxRetries: 2,
   });
 }
 
@@ -219,12 +265,15 @@ function compileGraph() {
             content: `Your previous response was not usable: ${lastError.message}. Respond again with exactly one JSON object matching the required schema and no other text.`,
           });
         }
-        const completion = await model.invoke(messages);
+        const completion = await invokeWithBackoff(() =>
+          model.invoke(messages),
+        );
         const rawText =
           typeof completion.content === 'string'
             ? completion.content
             : JSON.stringify(completion.content);
         const validated = ScoreSchema.parse(extractJsonObject(rawText));
+        const usage = extractTokenUsage(completion);
         const score: WritingScore = {
           ...validated,
           overallBand: clampToBand(
@@ -238,6 +287,7 @@ function compileGraph() {
         };
         return {
           rawScore: score,
+          tokenUsage: usage,
           steps: [
             ...state.steps,
             {
@@ -339,6 +389,7 @@ export async function runWritingScoringGraph(
     rawScore: null,
     gate: null,
     steps: [],
+    tokenUsage: null,
     error: null,
   });
   if (final.error || !final.rawScore) {
@@ -348,5 +399,6 @@ export async function runWritingScoringGraph(
     score: final.rawScore,
     gate: final.gate as 'PUBLISH' | 'REVIEW',
     steps: final.steps,
+    tokenUsage: final.tokenUsage,
   };
 }

@@ -35,6 +35,7 @@ export default function CertificatesPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [revokingId, setRevokingId] = useState<string | null>(null)
+  const [revokeError, setRevokeError] = useState<string | null>(null)
   const [issuing, setIssuing] = useState(false)
   const [issueError, setIssueError] = useState<string | null>(null)
   // Download/revoke failures must not clobber the list-fetch error state —
@@ -114,17 +115,18 @@ export default function CertificatesPage() {
 
   const handleConfirmRevoke = async () => {
     if (!revokingId) return
-    setActionError(null)
+    setRevokeError(null)
     const { error: revokeError } = await apiFetch(`/certificates/${revokingId}/revoke`, {
       method: "POST",
       json: { reason: "Revoked by holder" },
     })
     if (revokeError) {
-      setActionError(revokeError.message)
-    } else {
-      await fetchCertificates()
+      // Keep the dialog open with the real error instead of faking success.
+      setRevokeError(revokeError.message)
+      return
     }
     setRevokingId(null)
+    await fetchCertificates()
   }
 
   const handleIssue = async () => {
@@ -318,7 +320,11 @@ export default function CertificatesPage() {
         confirmLabel="Revoke Certificate"
         cancelLabel="Keep Certificate"
         onConfirm={handleConfirmRevoke}
-        onCancel={() => setRevokingId(null)}
+        onCancel={() => {
+          setRevokeError(null)
+          setRevokingId(null)
+        }}
+        error={revokeError}
       />
     </div>
   )

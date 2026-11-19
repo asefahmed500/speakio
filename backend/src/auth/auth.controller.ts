@@ -31,10 +31,27 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Password is required').max(128),
 });
 
+// Deployment note: when the frontend and API run on DIFFERENT sites (e.g. a
+// *.workers.dev frontend against a tunneled API), browsers only accept
+// cross-site auth cookies with SameSite=None + Secure. Set
+// COOKIE_SAMESITE=none in that topology; same-origin deployments keep lax.
+const COOKIE_SAMESITE = process.env.COOKIE_SAMESITE === 'none' ? 'none' : 'lax';
+const resetRequestSchema = z.object({
+  email: z.string().trim().email('A valid email address is required').max(254),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(20).max(128),
+  newPassword: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(128),
+});
+
 const BASE_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax' as const,
+  secure: process.env.NODE_ENV === 'production' || COOKIE_SAMESITE === 'none',
+  sameSite: COOKIE_SAMESITE as 'lax' | 'none',
   path: '/',
 };
 
@@ -52,9 +69,15 @@ function parseJwtTtlMs(raw: string | undefined): number {
   return value * unitMs[match[2]];
 }
 
-const ACCESS_TTL_MS = parseJwtTtlMs(process.env.JWT_EXPIRES_IN);
-const REFRESH_TTL_MS =
-  Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 7) * 24 * 60 * 60 * 1000;
+function accessTtlMs(): number {
+  // Read lazily (not at module scope) so .env values loaded by ConfigModule
+  // are always honored — module-scope reads race env loading.
+  return parseJwtTtlMs(process.env.JWT_EXPIRES_IN);
+}
+
+function refreshTtlMs(): number {
+  return Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 7) * 24 * 60 * 60 * 1000;
+}
 
 @Controller('auth')
 export class AuthController {
@@ -95,6 +118,29 @@ export class AuthController {
    * Exchanges a valid refresh cookie for a rotated pair. Replaying a rotated
    * token revokes the whole session family (theft detection).
    */
+  /** Always 200 — account existence is never revealed. */
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(200)
+  @Post('forgot-password')
+  async forgotPassword(
+    @Body(new ZodValidationPipe(resetRequestSchema))
+    body: z.infer<typeof resetRequestSchema>,
+  ) {
+    await this.authService.requestPasswordReset(body.email);
+    return { message: 'If an account exists, a reset link has been sent.' };
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(200)
+  @Post('reset-password')
+  async resetPassword(
+    @Body(new ZodValidationPipe(resetPasswordSchema))
+    body: z.infer<typeof resetPasswordSchema>,
+  ) {
+    await this.authService.resetPassword(body.token, body.newPassword);
+    return { message: 'Password updated. Please sign in.' };
+  }
+
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(200)
   @Post('refresh')
@@ -137,11 +183,11 @@ export class AuthController {
   ) {
     res.cookie('access_token', accessToken, {
       ...BASE_COOKIE_OPTIONS,
-      maxAge: ACCESS_TTL_MS,
+      maxAge: accessTtlMs(),
     });
     res.cookie('refresh_token', refreshToken, {
       ...BASE_COOKIE_OPTIONS,
-      maxAge: REFRESH_TTL_MS,
+      maxAge: refreshTtlMs(),
     });
   }
 }

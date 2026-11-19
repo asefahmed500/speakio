@@ -7,9 +7,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:deploy": "opennextjs-cloudflare deploy",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:backend": "npm --prefix backend run test:e2e",
+    "test:backend:unit": "npm --prefix backend test"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -23,7 +28,7 @@
     "input-otp": "^1.5.0",
     "lucide-react": "^1.42.0",
     "motion": "^13.2.0",
-    "next": "16.2.6",
+    "next": "^16.4.6",
     "next-themes": "^0.4.6",
     "react": "19.2.4",
     "react-day-picker": "^10.0.1",
@@ -37,6 +42,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.17",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -46,6 +52,7 @@
     "prettier": "^3.8.3",
     "prettier-plugin-tailwindcss": "^0.8.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   }
 }

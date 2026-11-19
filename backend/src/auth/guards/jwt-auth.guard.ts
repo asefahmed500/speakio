@@ -2,9 +2,11 @@ import {
   Injectable,
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   UnauthorizedException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
 import * as jwt from 'jsonwebtoken';
 import type {
   AuthenticatedRequest,
@@ -13,9 +15,32 @@ import type {
 
 type VerifiedPayload = AuthenticatedUser;
 
+/** Suspended-status cache TTL. Keeps the guard DB-light under traffic. */
+const STATUS_CACHE_TTL_MS = 30_000;
+
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
+  /**
+   * userId -> { suspended, expiresAt }. A suspension takes effect within this
+   * window even for live access tokens; a miss costs one indexed PK lookup.
+   */
+  private static statusCache = new Map<
+    string,
+    { suspended: boolean; role: string; expiresAt: number }
+  >();
+
+  /**
+   * Drops the cached status/role for a user so a suspension, reinstatement or
+   * role change takes effect on the very next request instead of after the
+   * cache TTL.
+   */
+  static invalidateStatus(userId: string): void {
+    JwtAuthGuard.statusCache.delete(userId);
+  }
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const cookies = (request.cookies ?? {}) as Record<
       string,
@@ -50,9 +75,82 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid authentication token payload');
     }
 
+    await this.enforceCurrentAccountState(payload.sub, payload.role);
+
     request.user = payload;
     return true;
   }
+
+  /**
+   * Rejects suspended accounts and stale-role tokens. Tokens outlive
+   * suspension (15m TTL) and carry a signed role copy, so the DB is the
+   * source of truth — consulted through a short-lived in-process cache and
+   * invalidated immediately on admin action (invalidateStatus).
+   */
+  private async enforceCurrentAccountState(
+    userId: string,
+    tokenRole: string,
+  ): Promise<void> {
+    const cached = JwtAuthGuard.statusCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.rejectIfStale(cached.suspended, cached.role, tokenRole);
+      return;
+    }
+    let suspended = false;
+    let role = tokenRole;
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { status: true, role: true },
+      });
+      // A token for a DELETED account is dead immediately — the DB is the
+      // source of truth and `role ?? tokenRole` would otherwise fake validity.
+      if (!user) throw new UnauthorizedException('Account no longer exists');
+      suspended = user.status === 'SUSPENDED';
+      role = user.role;
+      JwtAuthGuard.statusCache.set(userId, {
+        suspended,
+        role,
+        expiresAt: Date.now() + STATUS_CACHE_TTL_MS,
+      });
+      // Opportunistic prune: expired entries are worthless; keep the map
+      // bounded under churn without a background sweeper.
+      if (JwtAuthGuard.statusCache.size > 1_000) {
+        const now = Date.now();
+        for (const [id, entry] of JwtAuthGuard.statusCache) {
+          if (entry.expiresAt <= now) JwtAuthGuard.statusCache.delete(id);
+        }
+      }
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error;
+      // DB outage must not lock out every authenticated user; token validity
+      // still gates the request and the check retries after the cache window.
+      return;
+    }
+    // Rejection happens OUTSIDE the try — a swallowed ForbiddenException here
+    // would silently invalidate the whole guard.
+    this.rejectIfStale(suspended, role, tokenRole);
+  }
+
+  private rejectIfStale(
+    suspended: boolean,
+    dbRole: string,
+    tokenRole: string,
+  ): void {
+    if (suspended) {
+      throw new ForbiddenException(
+        'This account is suspended. Contact support for assistance.',
+      );
+    }
+    // Signed role diverged from the DB (promotion/demotion): the token is
+    // stale — 401 drives the client through re-authentication.
+    if (dbRole !== tokenRole) {
+      throw new UnauthorizedException(
+        'Your permissions have changed. Please sign in again.',
+      );
+    }
+  }
+
   private getSecret(): string {
     const secret = process.env.JWT_SECRET;
     if (!secret) {

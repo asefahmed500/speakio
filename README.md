@@ -12,19 +12,19 @@ Speakio is a role-based web platform for complete IELTS Academic preparation —
 - **Skill practice** — Listening, Reading, Writing and Speaking modules with real seeded test sets
 - **Exam engine** — timed sections with a *server-authoritative* clock, autosave/draft restore, word-count gates for essays, in-browser audio recording for speaking
 - **AI band scoring** — essays are graded against the four official IELTS criteria (Task Achievement, Coherence & Cohesion, Lexical Resource, Grammatical Range & Accuracy) with per-criterion bands, an overall band and examiner-style feedback
-- **Human-in-the-loop** — low-confidence AI results are routed to a review queue for an examiner before publishing
+- **AI agent review** — low-confidence first passes automatically trigger an independent second AI pass; the combined result publishes with no human in the loop
 - **Dashboard** — overall band, per-skill progress, attempt history and empty-state onboarding
 - **Study planner** — exam date, daily commitment, weakest-skill focus; plan persists to your account
 - **Vocabulary studio** — save words with topic, collocations and synonyms
 - **Certificates** — issued on milestone completion, each with a unique verification code and a public lookup page (`/verify`)
 
-### Admin / Instructor
+### Admin
+- **AI Review Monitor** — audit trail of every automated band decision, with admin override where needed
 - **Agent Ops dashboard** — live view of every AI agent run (queued / running / done / failed), confidence, token cost, latency, one-click retry
-- **Review queue** — override AI bands with examiner notes
 
 ### Platform
 - **Agent orchestration layer** — every AI operation (scoring, triage, review) runs as a registered agent job with logging, retries, confidence gating and cost tracking
-- **Role-based access** — `STUDENT`, `INSTRUCTOR`, `ADMIN`, `SUPER_ADMIN` enforced by JWT guards on the API **and** server-side route protection in Next.js
+- **Role-based access** — exactly two roles, `USER` and `ADMIN`, enforced by JWT guards on the API **and** server-side route protection in Next.js; role or suspension changes take effect immediately (session revocation + guard cache invalidation)
 - **Public verification** — no login required; revoked certificates are flagged publicly
 
 ---

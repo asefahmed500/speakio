@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Param,
+  Query,
   UseGuards,
   Req,
   BadRequestException,
@@ -38,8 +39,7 @@ const scoreWritingSchema = z.object({
     }),
 });
 
-const resolveSchema = z.object({
-  action: z.enum(['APPROVE', 'OVERRIDE']),
+const overrideSchema = z.object({
   finalBand: z.number().refine(isValidBand, {
     message:
       'finalBand must be a valid IELTS score between 0.0 and 9.0 in 0.5 increments',
@@ -69,9 +69,7 @@ export class ScoringController {
     });
     if (!attempt)
       throw new NotFoundException(`Attempt ${body.attemptId} not found`);
-    const privileged = ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(
-      req.user.role,
-    );
+    const privileged = ['ADMIN'].includes(req.user.role);
     if (attempt.userId !== req.user.sub && !privileged) {
       throw new NotFoundException(`Attempt ${body.attemptId} not found`);
     }
@@ -125,7 +123,7 @@ export class ScoringController {
   }
 
   @Get('runs')
-  @Roles('ADMIN', 'SUPER_ADMIN')
+  @Roles('ADMIN')
   async getAgentRuns() {
     return this.prisma.agentRun.findMany({
       take: 50,
@@ -135,7 +133,7 @@ export class ScoringController {
   }
 
   @Get('runs/:id')
-  @Roles('ADMIN', 'SUPER_ADMIN')
+  @Roles('ADMIN')
   async getAgentRun(@Param('id') id: string) {
     const run = await this.prisma.agentRun.findUnique({
       where: { id },
@@ -147,7 +145,7 @@ export class ScoringController {
 
   @Throttle({ default: { limit: 6, ttl: 60_000 } })
   @Post('runs/:id/retry')
-  @Roles('ADMIN', 'SUPER_ADMIN')
+  @Roles('ADMIN')
   async retryAgentRun(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
@@ -242,10 +240,24 @@ export class ScoringController {
   }
 
   @Get('review-queue')
-  @Roles('INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN')
-  async getReviewQueue() {
+  @Roles('ADMIN')
+  async getReviewQueue(@Query('status') status?: string) {
+    // The queue is the AI review AUDIT trail — every automated decision.
+    // An unknown filter returns an empty list, never the unfiltered trail.
+    const valid = [
+      'PENDING',
+      'AI_APPROVED',
+      'AI_ESCALATED',
+      'APPROVED',
+      'OVERRIDDEN',
+    ];
+    const where = status
+      ? valid.includes(status)
+        ? { status }
+        : { id: '__none__' }
+      : {};
     return this.prisma.reviewQueueItem.findMany({
-      where: { status: 'PENDING' },
+      where,
       include: {
         attempt: {
           include: {
@@ -255,16 +267,22 @@ export class ScoringController {
         },
       },
       orderBy: { createdAt: 'desc' },
+      take: 100,
     });
   }
 
+  /**
+   * ADMIN override of an AI review decision. AI agents finalize every band
+   * automatically; this endpoint is the single human lever — it overwrites
+   * the published score and marks the audit item OVERRIDDEN.
+   */
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
-  @Post('review-queue/:id/resolve')
-  @Roles('INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN')
-  async resolveReview(
+  @Post('review-queue/:id/override')
+  @Roles('ADMIN')
+  async overrideReview(
     @Param('id') id: string,
-    @Body(new ZodValidationPipe(resolveSchema))
-    body: z.infer<typeof resolveSchema>,
+    @Body(new ZodValidationPipe(overrideSchema))
+    body: z.infer<typeof overrideSchema>,
     @Req() req: AuthenticatedRequest,
   ) {
     const item = await this.prisma.reviewQueueItem.findUnique({
@@ -274,37 +292,32 @@ export class ScoringController {
     if (!item) {
       throw new NotFoundException(`Review queue item ${id} not found`);
     }
-    if (item.status !== 'PENDING') {
-      throw new ConflictException(
-        `Review item has already been resolved (${item.status})`,
-      );
-    }
-    if (item.skill !== 'SPEAKING' && !item.attempt) {
+    if (!item.attempt) {
       throw new BadRequestException('Review item is not bound to an attempt');
     }
 
-    // Audio responses (SPEAKING) may be large; the reviewer gets essay text only.
     const transaction = await this.prisma.$transaction(async (tx) => {
-      // Conditional update inside the transaction: two concurrent resolves —
-      // only the first transitions PENDING → resolved; the second conflicts.
+      // Conditional update: two concurrent overrides — only the first wins.
       const claim = await tx.reviewQueueItem.updateMany({
-        where: { id, status: 'PENDING' },
+        where: { id, status: { not: 'OVERRIDDEN' } },
         data: {
-          status: body.action === 'APPROVE' ? 'APPROVED' : 'OVERRIDDEN',
+          status: 'OVERRIDDEN',
           finalBand: body.finalBand,
-          instructorNotes: body.instructorNotes,
+          instructorNotes:
+            body.instructorNotes ??
+            `${item.instructorNotes ?? ''}\n[ADMIN OVERRIDE] Band set to ${body.finalBand}.`.trim(),
           reviewedById: req.user.sub,
           reviewedAt: new Date(),
         },
       });
       if (claim.count === 0) {
         throw new ConflictException(
-          'Review item was just resolved by another examiner',
+          'Review item was just overridden by another admin',
         );
       }
       const updated = await tx.reviewQueueItem.findUnique({ where: { id } });
 
-      // One final score per (attempt, skill) — resolving twice can never duplicate.
+      // One final score per (attempt, skill) — overriding twice never duplicates.
       await tx.score.upsert({
         where: {
           attemptId_skill: { attemptId: item.attemptId, skill: item.skill },
@@ -312,8 +325,8 @@ export class ScoringController {
         update: {
           bandScore: body.finalBand,
           feedbackSummary:
-            body.instructorNotes || 'Instructor verified band score.',
-          scoredBy: 'INSTRUCTOR',
+            body.instructorNotes || 'Admin override of the AI review band.',
+          scoredBy: 'ADMIN_OVERRIDE',
           confidence: 1.0,
         },
         create: {
@@ -321,14 +334,14 @@ export class ScoringController {
           skill: item.skill,
           bandScore: body.finalBand,
           feedbackSummary:
-            body.instructorNotes || 'Instructor verified band score.',
-          scoredBy: 'INSTRUCTOR',
+            body.instructorNotes || 'Admin override of the AI review band.',
+          scoredBy: 'ADMIN_OVERRIDE',
           confidence: 1.0,
         },
       });
 
       await tx.attempt.update({
-        where: { id: item.attemptId },
+        where: { id: item.attemptId, status: { not: 'IN_PROGRESS' } },
         data: { status: 'COMPLETED' },
       });
 

@@ -66,8 +66,7 @@ export class CertificatesController {
     body: z.infer<typeof revokeSchema>,
     @Req() req: AuthenticatedRequest,
   ) {
-    const isAdmin =
-      req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN';
+    const isAdmin = req.user.role === 'ADMIN';
     return this.certificatesService.revoke(this.uid(req), id, body.reason, {
       adminOverride: isAdmin,
     });

@@ -4,28 +4,60 @@ import {
   ForbiddenException,
   ConflictException,
   BadRequestException,
-  ServiceUnavailableException,
-  HttpException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WritingScoringAgent } from '../agents/writing-scoring.agent';
+import { SpeakingScoringAgent } from '../agents/speaking-scoring.agent';
+import { CertificatesService } from '../certificates/certificates.service';
+import { Inject } from '@nestjs/common';
+import { forwardRef } from '@nestjs/common';
 import { QuestionUniquenessService } from '../tests/question-uniqueness.service';
 import { QUESTIONS_PER_ATTEMPT } from '../tests/tests.service';
+import { PoolAutomationService } from '../tests/pool-automation.service';
 import { rawToBand, overallBandOf } from '../common/band.utils';
 import { AttemptStatus, Prisma, SkillType, Attempt } from '@prisma/client';
 
 const MAX_AUDIO_BASE64_BYTES = 6 * 1024 * 1024;
 
 @Injectable()
-export class AttemptsService {
+export class AttemptsService implements OnModuleInit {
   private readonly logger = new Logger(AttemptsService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly writingAgent: WritingScoringAgent,
+    private readonly speakingAgent: SpeakingScoringAgent,
     private readonly uniqueness: QuestionUniquenessService,
+    private readonly poolAutomation: PoolAutomationService,
+    @Inject(forwardRef(() => CertificatesService))
+    private readonly certificatesService: CertificatesService,
   ) {}
+
+  /**
+   * Startup recovery: a process restart can strand attempts in SCORING after
+   * the background agent promise was lost. Reset those older than 10 minutes
+   * to SUBMITTED so the student's retry/rescore path can recover them.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const cutoff = new Date(Date.now() - AttemptsService.STALE_RUN_MS * 2);
+      const recovered = await this.prisma.attempt.updateMany({
+        where: { status: AttemptStatus.SCORING, startedAt: { lt: cutoff } },
+        data: { status: AttemptStatus.SUBMITTED },
+      });
+      if (recovered.count > 0) {
+        this.logger.warn(
+          `Recovered ${recovered.count} stranded SCORING attempts after startup`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Startup recovery failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
 
   async start(userId: string, testSetId: string) {
     const testSet = await this.prisma.testSet.findUnique({
@@ -48,6 +80,11 @@ export class AttemptsService {
       where: { testSetId },
       orderBy: { orderIndex: 'asc' },
     });
+
+    // Automation hook: while the student answers this attempt, the system may
+    // quietly generate fresh questions so future attempts keep rotating.
+    // Fire-and-forget — it can never delay or fail the start.
+    this.poolAutomation.maybeTopUp(testSetId);
     // Adaptive selection: serve a never-seen subset when the pool is larger
     // than one attempt's worth of questions; otherwise the full fixed set.
     const selected =
@@ -216,9 +253,9 @@ export class AttemptsService {
           mergedAnswers,
         );
       case SkillType.WRITING:
-        return this.scoreWriting(attempt, questions, mergedAnswers);
+        return this.scoreWriting(userId, attempt, questions, mergedAnswers);
       case SkillType.SPEAKING:
-        return this.routeSpeakingToReview(attemptId, questions, mergedAnswers);
+        return this.scoreSpeaking(userId, attemptId, questions, mergedAnswers);
       default:
         // Exhaustive over the non-FULL_MOCK SkillType union.
         throw new BadRequestException(
@@ -314,6 +351,7 @@ export class AttemptsService {
   }
 
   private async scoreWriting(
+    userId: string,
     attempt: { id: string; testSetId: string },
     questions: Array<{
       id: string;
@@ -345,8 +383,12 @@ export class AttemptsService {
       data: { status: AttemptStatus.SCORING },
     });
 
-    try {
-      const result = await this.writingAgent.scoreEssay({
+    // Run the AI pipeline in the background: under 10k concurrent users the
+    // HTTP request must never hold an LLM call open. The results page already
+    // polls while status is SCORING, and a background failure rolls the
+    // attempt back to SUBMITTED for the retry/rescore path.
+    void this.writingAgent
+      .scoreEssay({
         attemptId: attempt.id,
         questionPrompt: essayQuestion.passage
           ? `${essayQuestion.prompt}\n\nDATA SUMMARY: ${essayQuestion.passage}`
@@ -354,44 +396,91 @@ export class AttemptsService {
         taskType: essayQuestion.partNumber === 1 ? 'TASK_1' : 'TASK_2',
         studentEssay: essay,
         userContext: { userId: '', role: 'SYSTEM_ATTEMPT' },
+      })
+      .then(async () => {
+        // Milestone hook: certificate issuance belongs to the moment all four
+        // skills complete — with async scoring that moment lives here.
+        await this.certificatesService.issue(userId).catch((issueError: unknown) => {
+          this.logger.error(
+            `Background certificate issuance failed for ${userId}: ${issueError instanceof Error ? issueError.message : issueError}`,
+          );
+        });
+      })
+      .catch(async (error: unknown) => {
+        // A scored attempt (post-publish telemetry failure) must NEVER
+        // regress — the result is real and COMPLETED stays truthful.
+        const scored = await this.prisma.score.count({
+          where: { attemptId: attempt.id },
+        });
+        await this.prisma.attempt.update({
+          where: { id: attempt.id },
+          data: {
+            status:
+              scored === 0 ? AttemptStatus.SUBMITTED : AttemptStatus.COMPLETED,
+          },
+        });
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Background AI scoring failed for attempt ${attempt.id}: ${message}`,
+        );
       });
-      return {
-        attemptId: attempt.id,
-        status: result.status,
-        scoreId: result.scoreId,
-        bandScore: result.output.overallBand,
-        needsReview: result.status === 'WAITING_FOR_APPROVAL',
-      };
-    } catch (error) {
-      // Keep the attempt in SUBMITTED so it can be re-scored; never fake a result.
-      await this.prisma.attempt.update({
-        where: { id: attempt.id },
-        data: { status: AttemptStatus.SUBMITTED },
-      });
-      const message = error instanceof Error ? error.message : String(error);
-      const stack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `AI scoring failed for attempt ${attempt.id}: ${message}`,
-        stack,
-      );
-      // Pass through HTTP exceptions (e.g. the agent's 503 for provider
-      // outages, or its 400 for content problems) instead of flattening every
-      // failure into a misleading client error.
-      if (error instanceof HttpException) throw error;
-      throw new ServiceUnavailableException(
-        'AI scoring pipeline is temporarily unavailable. Your submission is saved — please retry scoring in a moment.',
-      );
-    }
+
+    return {
+      attemptId: attempt.id,
+      status: AttemptStatus.SCORING,
+      message:
+        'Your essay is being scored by AI review agents — your band appears on the results page automatically.',
+    };
   }
 
-  private async routeSpeakingToReview(
+  /**
+   * SPEAKING: real audio → AI agents only. Segments are WAV data URLs joined
+   * by '|'; the speaking agent transcribes (GLM-ASR) and scores with a
+   * two-pass review. No human reviewer exists in this SaaS.
+   */
+  private async scoreSpeaking(
+    userId: string,
     attemptId: string,
-    questions: Array<{ id: string }>,
+    questions: Array<{ id: string; prompt: string; passage: string | null }>,
     answers: Record<string, string>,
   ) {
     const firstQuestion = questions[0];
-    const audioBase64 = answers[firstQuestion?.id ?? ''] ?? '';
-    if (audioBase64.length * 0.75 > MAX_AUDIO_BASE64_BYTES) {
+    const joined = answers[firstQuestion?.id ?? ''] ?? '';
+    const audioSegments = joined && joined.startsWith('data:audio')
+      ? joined.split('|')
+      : [];
+    const typedAnswer = joined && !joined.startsWith('data:audio')
+      ? joined.trim()
+      : '';
+    const typedWordCount = typedAnswer
+      ? typedAnswer.split(/\s+/).filter(Boolean).length
+      : 0;
+
+    if (
+      audioSegments.length === 0 &&
+      (typedWordCount < 40 || !firstQuestion)
+    ) {
+      await this.prisma.attempt.update({
+        where: { id: attemptId },
+        data: { status: AttemptStatus.IN_PROGRESS },
+      });
+      throw new BadRequestException(
+        'Record a response, or type at least 40 words for a free text-based speaking review.',
+      );
+    }
+    if (typedAnswer && typedWordCount > 1500) {
+      await this.prisma.attempt.update({
+        where: { id: attemptId },
+        data: { status: AttemptStatus.IN_PROGRESS },
+      });
+      throw new BadRequestException('Typed response exceeds 1500 words.');
+    }
+    const totalBinaryBytes = audioSegments.reduce(
+      (sum, seg) =>
+        sum + Math.floor((seg.length - seg.indexOf(',') - 1) * 0.75),
+      0,
+    );
+    if (totalBinaryBytes > MAX_AUDIO_BASE64_BYTES) {
       await this.prisma.attempt.update({
         where: { id: attemptId },
         data: { status: AttemptStatus.IN_PROGRESS },
@@ -400,52 +489,58 @@ export class AttemptsService {
         'Recording exceeds the 6MB limit. Please record a shorter response.',
       );
     }
-    if (!audioBase64) {
-      await this.prisma.attempt.update({
-        where: { id: attemptId },
-        data: { status: AttemptStatus.IN_PROGRESS },
-      });
-      throw new BadRequestException(
-        'A recorded response is required before submission',
-      );
-    }
-
-    const existingItem = await this.prisma.reviewQueueItem.findUnique({
-      where: { attemptId },
-    });
-    if (!existingItem || existingItem.status === 'PENDING') {
-      // updateMany (not upsert-update) so a race with an instructor resolving
-      // the item can never reopen an already-resolved review.
-      const reopened = await this.prisma.reviewQueueItem.updateMany({
-        where: { attemptId, status: 'PENDING' },
-        data: {
-          instructorNotes: 'Awaiting examiner evaluation of recorded response.',
-        },
-      });
-      if (!existingItem && reopened.count === 0) {
-        await this.prisma.reviewQueueItem.create({
-          data: {
-            attemptId,
-            skill: SkillType.SPEAKING,
-            status: 'PENDING',
-            proposedBand: null,
-            instructorNotes:
-              'Awaiting examiner evaluation of recorded response.',
-          },
-        });
-      }
-    }
 
     await this.prisma.attempt.update({
       where: { id: attemptId },
-      data: { status: AttemptStatus.NEEDS_REVIEW },
+      data: { status: AttemptStatus.SCORING },
     });
+
+    // Background AI pipeline (see scoreWriting): the HTTP request returns
+    // immediately; the results page polls while SCORING. Content rejections
+    // roll back to IN_PROGRESS (re-recordable), infrastructure failures to
+    // SUBMITTED (rescore path).
+    void this.speakingAgent
+      .scoreRecording({
+        attemptId,
+        cueCardPrompt: firstQuestion.passage
+          ? `${firstQuestion.prompt}\n\nFOLLOW-UP: ${firstQuestion.passage}`
+          : firstQuestion.prompt,
+        audioSegments,
+        textAnswer: typedAnswer || undefined,
+        userContext: { userId: '', role: 'SYSTEM_ATTEMPT' },
+      })
+      .then(async () => {
+        await this.certificatesService.issue(userId).catch((issueError: unknown) => {
+          this.logger.error(
+            `Background certificate issuance failed for ${userId}: ${issueError instanceof Error ? issueError.message : issueError}`,
+          );
+        });
+      })
+      .catch(async (error: unknown) => {
+        const scored = await this.prisma.score.count({ where: { attemptId } });
+        const rollbackStatus =
+          error instanceof BadRequestException
+            ? scored === 0
+              ? AttemptStatus.IN_PROGRESS
+              : AttemptStatus.COMPLETED
+            : scored === 0
+              ? AttemptStatus.SUBMITTED
+              : AttemptStatus.COMPLETED;
+        await this.prisma.attempt.update({
+          where: { id: attemptId },
+          data: { status: rollbackStatus },
+        });
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Background AI speaking review failed for attempt ${attemptId}: ${message}`,
+        );
+      });
 
     return {
       attemptId,
-      status: AttemptStatus.NEEDS_REVIEW,
+      status: AttemptStatus.SCORING,
       message:
-        'Recording submitted. A certified examiner will evaluate your response.',
+        'Your recording is being transcribed and reviewed by AI agents — your band appears on the results page automatically.',
     };
   }
 
@@ -508,7 +603,7 @@ export class AttemptsService {
     });
     const answers = (attempt.answersJson as Record<string, string>) ?? {};
     if (attempt.testSet.skill === SkillType.WRITING) {
-      return this.scoreWriting(attempt, questions, answers);
+      return this.scoreWriting(userId, attempt, questions, answers);
     }
     if (
       attempt.testSet.skill === SkillType.LISTENING ||
@@ -522,7 +617,7 @@ export class AttemptsService {
       );
     }
     if (attempt.testSet.skill === SkillType.SPEAKING) {
-      return this.routeSpeakingToReview(attemptId, questions, answers);
+      return this.scoreSpeaking(userId, attemptId, questions, answers);
     }
     throw new BadRequestException(
       'Full mock re-scoring is not supported yet. Please take the individual skill tests.',
@@ -557,9 +652,7 @@ export class AttemptsService {
   }
 
   async getResult(userId: string, userRole: string, attemptId: string) {
-    const isPrivileged = ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(
-      userRole,
-    );
+    const isPrivileged = ['ADMIN'].includes(userRole);
     const attempt = await this.prisma.attempt.findUnique({
       where: { id: attemptId },
       include: {
@@ -573,6 +666,16 @@ export class AttemptsService {
     }
 
     const score = attempt.scores[0] ?? null;
+    // Review shows exactly what the student was served — the attempt's question
+    // snapshot — never the whole (possibly larger) adaptive pool.
+    const snapshotIds = Array.isArray(attempt.questionIdsJson)
+      ? (attempt.questionIdsJson as string[])
+      : null;
+    const answers = (attempt.answersJson as Record<string, string>) ?? {};
+    const servedQuestions = snapshotIds
+      ? attempt.testSet.questions.filter((q) => snapshotIds.includes(q.id))
+      : attempt.testSet.questions;
+
     return {
       id: attempt.id,
       status: attempt.status,
@@ -592,6 +695,8 @@ export class AttemptsService {
             coherenceCohesion: score.coherenceCohesion,
             lexicalResource: score.lexicalResource,
             grammaticalAccuracy: score.grammaticalAccuracy,
+            fluencyCoherence: score.fluencyCoherence,
+            pronunciation: score.pronunciation,
             feedbackSummary: score.feedbackSummary,
             inlineFeedbackJson: score.inlineFeedbackJson,
             scoredBy: score.scoredBy,
@@ -599,13 +704,21 @@ export class AttemptsService {
             createdAt: score.createdAt,
           }
         : null,
-      questions: attempt.testSet.questions.map((q) => ({
+      questions: servedQuestions.map((q) => ({
         id: q.id,
         partNumber: q.partNumber,
         questionType: q.questionType,
         prompt: q.prompt,
         passage: q.passage,
+        options: Array.isArray(
+          ((q.metadata ?? {}) as Record<string, unknown>).options,
+        )
+          ? (((q.metadata ?? {}) as Record<string, unknown>)
+              .options as string[])
+          : undefined,
       })),
+      // Per-question answers so the review can show what the student gave.
+      answers,
       answerText: this.extractPrimaryAnswer(attempt.answersJson),
     };
   }
@@ -640,7 +753,10 @@ export class AttemptsService {
     if (!answersJson || typeof answersJson !== 'object') return null;
     const values = Object.values(answersJson as Record<string, unknown>);
     const longestText = values
-      .filter((v): v is string => typeof v === 'string' && v.length > 0)
+      .filter(
+        (v): v is string =>
+          typeof v === 'string' && v.length > 0 && !v.startsWith('data:'),
+      )
       .sort((a, b) => b.length - a.length)[0];
     return longestText ?? null;
   }

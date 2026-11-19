@@ -89,7 +89,7 @@ export default function AgentOpsPage() {
   const retry = async (runId: string) => {
     setRetryingId(runId)
     setRetryMessage(null)
-    const { error: retryError } = await apiFetch(`/scoring/runs/${runId}/retry`, { method: "POST" })
+    const { error: retryError } = await apiFetch(`/scoring/runs/${runId}/retry`, { method: "POST", timeoutMs: 0 })
     setRetryMessage(
       retryError ? retryError.message : "Run re-executed successfully."
     )
@@ -160,7 +160,7 @@ export default function AgentOpsPage() {
           <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center space-y-2">
             <h2 className="text-base font-semibold">No agent runs yet</h2>
             <p className="text-sm text-muted-foreground">
-              Runs appear here once students submit writing tests for AI scoring.
+              Runs appear here once students submit writing or speaking tests for AI scoring.
             </p>
           </div>
         )}
@@ -215,20 +215,29 @@ export default function AgentOpsPage() {
                       Details
                     </Button>
                     {run.status === "FAILED" && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void retry(run.id)}
-                        disabled={retryingId === run.id}
-                        className="cursor-pointer"
-                      >
-                        {retryingId === run.id ? (
-                          <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden />
-                        ) : (
-                          <RotateCcw className="mr-2 h-3.5 w-3.5" aria-hidden />
-                        )}
-                        Retry
-                      </Button>
+                      run.agentType === "WRITING_SCORING" && run.attemptId ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void retry(run.id)}
+                          disabled={retryingId === run.id}
+                          className="cursor-pointer"
+                        >
+                          {retryingId === run.id ? (
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden />
+                          ) : (
+                            <RotateCcw className="mr-2 h-3.5 w-3.5" aria-hidden />
+                          )}
+                          Retry
+                        </Button>
+                      ) : (
+                        <span
+                          className="text-[10px] text-muted-foreground"
+                          title="Only writing-scoring runs can be retried"
+                        >
+                          No retry
+                        </span>
+                      )
                     )}
                   </div>
                 </li>
@@ -293,7 +302,7 @@ export default function AgentOpsPage() {
                 </ul>
               </div>
             )}
-            {detail.status === "FAILED" && (
+            {detail.status === "FAILED" && detail.agentType === "WRITING_SCORING" && detail.attemptId && (
               <Button
                 size="sm"
                 onClick={() => void retry(detail.id)}

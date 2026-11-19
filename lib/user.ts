@@ -7,7 +7,7 @@ export interface SessionUser {
   id: string
   email: string
   name: string
-  role: "STUDENT" | "INSTRUCTOR" | "ADMIN" | "SUPER_ADMIN"
+  role: "USER" | "ADMIN"
   targetBand: number | null
   examDate: string | null
   moduleType: "ACADEMIC" | "GENERAL"
@@ -33,10 +33,6 @@ export type SessionResult =
   | { status: "unauthenticated" }
   | { status: "backend_unreachable" }
 
-export function isStaff(role: SessionUser["role"]): boolean {
-  return role === "INSTRUCTOR" || role === "ADMIN" || role === "SUPER_ADMIN"
-}
-
 export function isAdmin(role: SessionUser["role"]): boolean {
-  return role === "ADMIN" || role === "SUPER_ADMIN"
+  return role === "ADMIN"
 }

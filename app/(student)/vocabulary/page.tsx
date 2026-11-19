@@ -194,13 +194,18 @@ export default function VocabularyPage() {
   }, [addOpen])
 
   return (
-    <div className="flex-1 bg-surface-subtle">
+    <div className="flex-1 bg-background text-foreground min-h-0 relative overflow-hidden">
+      {/* Background ambient glow */}
+      <div className="pointer-events-none absolute -top-40 left-1/3 h-96 w-96 rounded-full bg-emerald-500/10 blur-[130px]" />
+      <div className="pointer-events-none absolute top-1/2 -right-20 h-96 w-96 rounded-full bg-cyan-500/10 blur-[140px]" />
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Vocabulary</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {items != null ? `${items.length} saved words` : "Your band 7+ word bank"}
+              {items != null
+                ? `${items.length} saved ${items.length === 1 ? "word" : "words"}`
+                : "Your band 7+ word bank"}
             </p>
           </div>
           <Button onClick={() => setAddOpen(true)} className="cursor-pointer self-start sm:self-auto">
@@ -241,7 +246,7 @@ export default function VocabularyPage() {
                 aria-pressed={topic === t}
                 className={`shrink-0 rounded-none border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
                   topic === t
-                    ? "border-primary bg-primary text-white"
+                    ? "border-primary bg-primary text-foreground"
                     : "border-border bg-card text-muted-foreground hover:text-foreground"
                 }`}
               >

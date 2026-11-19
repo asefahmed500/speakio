@@ -4,6 +4,8 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import { randomInt } from 'crypto';
@@ -23,6 +25,7 @@ const REQUIRED_SKILLS = [
 export class CertificatesService {
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => AttemptsService))
     private readonly attemptsService: AttemptsService,
   ) {}
 

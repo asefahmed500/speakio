@@ -8,17 +8,19 @@ import {
   Loader2,
   CheckCircle2,
   Clock,
-  Mic,
-  Square,
-  Play,
-  FileText,
-  Volume2,
+  Headphones,
+  ArrowRight,
+  ZoomIn,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useExamStore } from "@/stores/use-exam-store"
 import { apiFetch } from "@/lib/api-client"
+import { ExamSoundCheckModal } from "@/components/exam/exam-sound-check"
+import { AiSpeakingExaminer } from "@/components/exam/ai-speaking-examiner"
+import { ListeningAudioPlayer } from "@/components/exam/listening-audio-player"
+import { QuestionNavStrip } from "@/components/exam/question-nav-strip"
 
 interface TestQuestion {
   id: string
@@ -72,6 +74,14 @@ export default function TakeTestPage() {
   const [draftRestored, setDraftRestored] = useState(false)
   const [saveState, setSaveState] = useState<"idle" | "saved" | "error">("idle")
 
+  // Sound check modal state
+  const [showSoundCheck, setShowSoundCheck] = useState(true)
+
+  // Navigation & reading tools
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
+  const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set())
+  const [readingFontSize, setReadingFontSize] = useState<"normal" | "large">("normal")
+
   const examStore = useExamStore
   const setDraftAnswer = examStore((s) => s.setAnswer)
   const setEssayText = examStore((s) => s.setEssayText)
@@ -82,12 +92,11 @@ export default function TakeTestPage() {
   const secondsRef = useRef(secondsLeft)
   const attemptRef = useRef(attempt)
   const submittingRef = useRef(false)
-  // One-shot guard for the expiry auto-submit: without it a failed auto-submit
-  // re-arms the timer effect and re-POSTs every second (429 storm against a
-  // 12/min throttled endpoint).
   const autoSubmitRef = useRef(false)
 
-  // Keep refs in sync outside of render (read by autosave/submit callbacks).
+  // Speaking state (for submission compatibility)
+  const [speakingRecorded, setSpeakingRecorded] = useState(false)
+
   useEffect(() => {
     answersRef.current = answers
   }, [answers])
@@ -97,17 +106,6 @@ export default function TakeTestPage() {
   useEffect(() => {
     attemptRef.current = attempt
   }, [attempt])
-
-  // Speaking recorder state
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const [recordingState, setRecordingState] = useState<
-    "idle" | "requesting" | "recording" | "processing" | "recorded" | "denied"
-  >("idle")
-  const [recordingSeconds, setRecordingSeconds] = useState(0)
-  const [audioError, setAudioError] = useState<string | null>(null)
-  const [audioUrl, setAudioUrl] = useState<string | null>(null)
 
   const autosave = useCallback(async () => {
     const currentAttempt = attemptRef.current
@@ -151,12 +149,6 @@ export default function TakeTestPage() {
 
       if (error || !data) {
         submittingRef.current = false
-        // A 409/404 here almost always means the attempt was already submitted
-        // (e.g. the first auto-submit reached the server but the response was
-        // lost). A 503 means answers were saved and the attempt is SUBMITTED,
-        // but AI scoring failed — the results page owns the retry-scoring flow.
-        // In all three cases land on the results page instead of asking to
-        // resubmit.
         if (error && (error.status === 409 || error.status === 404 || error.status === 503)) {
           clearExamDraft()
           router.push(`/results/${currentAttempt.id}`)
@@ -168,7 +160,7 @@ export default function TakeTestPage() {
             ? error.message
             : auto
               ? "Time expired, but automatic submission failed. Please submit manually."
-              : (error?.message ?? "Submission failed. Please try again."),
+              : (error?.message ?? "Submission failed. Please try again.")
         )
         return
       }
@@ -179,7 +171,7 @@ export default function TakeTestPage() {
     [clearExamDraft, router]
   )
 
-  // Load the test and start/resume the attempt.
+  // Load test and initialize attempt
   useEffect(() => {
     let cancelled = false
     async function bootstrap() {
@@ -203,15 +195,12 @@ export default function TakeTestPage() {
         json: { testSetId: testData.id },
       })
       if (cancelled) return
-      // 401 on a non-auth endpoint is already handled centrally by apiFetch
-      // (full-page redirect to /login?next=…); a second push here only races it.
       if (attemptError || !attemptData) {
         setLoadError(attemptError?.message ?? "Could not start the attempt.")
         setPhase("error")
         return
       }
 
-      // Handle attempts already past the IN_PROGRESS state.
       if (attemptData.status !== "IN_PROGRESS") {
         router.replace(`/results/${attemptData.id}`)
         return
@@ -221,8 +210,6 @@ export default function TakeTestPage() {
       const draft = examStore.getState()
       const draftMatches = draft.attemptId === attemptData.id
       const draftMap = draftAnswersToMap(draft)
-      // Essay text is stored under `essayText`, not `answers`, so it must be
-      // merged back explicitly or unsaved typing since the last autosave is lost.
       if (draftMatches && draft.essayText) {
         const essayQuestionId = testData.questions.find((q) => q.questionType === "ESSAY")?.id
         if (essayQuestionId) draftMap[essayQuestionId] = draft.essayText
@@ -241,16 +228,13 @@ export default function TakeTestPage() {
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [testId])
+  }, [testId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Timer tick + autosave + auto-submit at zero.
+  // Timer tick (starts once sound check is accepted)
   const hasTimer = secondsLeft !== null
   useEffect(() => {
-    if (phase !== "ready" || !hasTimer) return
+    if (phase !== "ready" || !hasTimer || showSoundCheck) return
     const interval = setInterval(() => {
-      // Read from the ref and drive the tick outside the state updater —
-      // updaters must stay pure (StrictMode invokes them twice).
       const prev = secondsRef.current
       if (prev === null) return
       if (prev <= 1) {
@@ -265,16 +249,16 @@ export default function TakeTestPage() {
       setSecondsLeft(prev - 1)
     }, 1000)
     return () => clearInterval(interval)
-  }, [phase, hasTimer, doSubmit])
+  }, [phase, hasTimer, showSoundCheck, doSubmit])
 
-  // Periodic autosave while the exam is in progress.
+  // Periodic autosave
   useEffect(() => {
-    if (phase !== "ready") return
+    if (phase !== "ready" || showSoundCheck) return
     const interval = setInterval(() => void autosave(), 15_000)
     return () => clearInterval(interval)
-  }, [phase, autosave])
+  }, [phase, showSoundCheck, autosave])
 
-  // Warn before leaving with an unfinished attempt.
+  // Warn before leaving mid-exam
   useEffect(() => {
     if (phase !== "ready") return
     const handler = (e: BeforeUnloadEvent) => {
@@ -284,40 +268,8 @@ export default function TakeTestPage() {
     return () => window.removeEventListener("beforeunload", handler)
   }, [phase])
 
-  // Reset the timer reference for recording; auto-stop at the 2 minute mark.
-  useEffect(() => {
-    if (recordingState !== "recording") return
-    const interval = setInterval(() => {
-      setRecordingSeconds((s) => {
-        if (s + 1 >= 120) {
-          // .stop() fires recorder.onstop, which commits the blob and moves
-          // the state through processing → recorded. Setting "recorded" here
-          // as well only causes a transient flicker.
-          mediaRecorderRef.current?.stop()
-          return 120
-        }
-        return s + 1
-      })
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [recordingState])
-
-  // Release the microphone if the user leaves mid-recording (route change,
-  // back navigation). Without this the browser keeps the mic live.
-  useEffect(() => {
-    return () => {
-      const recorder = mediaRecorderRef.current
-      if (recorder && recorder.state === "recording") recorder.stop()
-      streamRef.current?.getTracks().forEach((t) => t.stop())
-    }
-  }, [])
-
   const setAnswer = (questionId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }))
-    // Multi-megabyte base64 audio would blow the ~5MB localStorage quota and
-    // silently kill draft persistence for every other answer. The recording
-    // still reaches the server via autosave/submit; it just isn't rehydrated
-    // into the local draft.
     const isTooLargeForDraft = value.startsWith("data:audio")
     const isEssay = test?.questions.some((q) => q.id === questionId && q.questionType === "ESSAY")
     if (isEssay) {
@@ -327,80 +279,61 @@ export default function TakeTestPage() {
     }
   }
 
-  const answeredCount = test ? test.questions.filter((q) => (answers[q.id] ?? "").trim().length > 0).length : 0
+  const toggleFlag = (questionId: string) => {
+    setFlaggedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(questionId)) next.delete(questionId)
+      else next.add(questionId)
+      return next
+    })
+  }
+
+  // Answered counts and validation
+  const answeredCount = test
+    ? test.questions.filter((q) => (answers[q.id] ?? "").trim().length > 0).length
+    : 0
   const essayQuestion = test?.questions.find((q) => q.questionType === "ESSAY")
   const essayText = essayQuestion ? (answers[essayQuestion.id] ?? "") : ""
   const essayWordCount = essayText.trim() ? essayText.trim().split(/\s+/).filter(Boolean).length : 0
   const timeExpired = secondsLeft === 0
-  // An expired attempt must always be submittable — otherwise a student whose
-  // auto-submit failed (e.g. network blip at 0:00) could be locked out.
+  const isFullMock = test?.skill === "FULL_MOCK"
+  const firstQuestionId = test?.questions[0]?.id ?? ""
+  const firstAnswer = answers[firstQuestionId] ?? ""
+  const typedSpeakingText =
+    test?.skill === "SPEAKING" &&
+    firstAnswer.length > 0 &&
+    !firstAnswer.startsWith("data:audio")
+      ? firstAnswer
+      : ""
+  const typedSpeakingWords = typedSpeakingText.trim()
+    ? typedSpeakingText.trim().split(/\s+/).filter(Boolean).length
+    : 0
+
   const canSubmit =
-    timeExpired ||
-    (test != null &&
-      (test.skill === "WRITING"
-        ? essayWordCount >= 20
-        : test.skill === "SPEAKING"
-          ? recordingState === "recorded"
-          : answeredCount > 0))
-
-  const startRecording = async () => {
-    setAudioError(null)
-    setRecordingState("requesting")
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      streamRef.current = stream
-      const recorder = new MediaRecorder(stream)
-      chunksRef.current = []
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data)
-      }
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" })
-        const reader = new FileReader()
-        // Block submission until the recording is committed to answers.
-        setRecordingState("processing")
-        reader.onloadend = () => {
-          const base64 = reader.result as string
-          const firstQuestion = test?.questions[0]
-          if (firstQuestion) {
-            setAnswers((prev) => ({ ...prev, [firstQuestion.id]: base64 }))
-          }
-          setRecordingState("recorded")
-        }
-        reader.onerror = () => {
-          setRecordingState("idle")
-          setAudioError("The recording could not be processed. Please try recording again.")
-        }
-        reader.readAsDataURL(blob)
-        // Revoke the previous preview so re-recording doesn't leak object URLs.
-        setAudioUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev)
-          return URL.createObjectURL(blob)
-        })
-        stream.getTracks().forEach((t) => t.stop())
-      }
-      mediaRecorderRef.current = recorder
-      recorder.start()
-      setRecordingSeconds(0)
-      setRecordingState("recording")
-    } catch {
-      setRecordingState("denied")
-      setAudioError("Microphone access was denied. Enable it in your browser settings to record a response.")
-    }
-  }
-
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop()
-  }
+    !isFullMock &&
+    (timeExpired ||
+      (test != null &&
+        (test.skill === "WRITING"
+          ? essayWordCount >= 20
+          : test.skill === "SPEAKING"
+            ? speakingRecorded || typedSpeakingWords >= 40
+            : answeredCount > 0)))
 
   if (phase === "loading" || phase === "submitting") {
     return (
-      <div className="flex-1 flex items-center justify-center min-h-[60vh]" role="status" aria-live="polite">
-        <div className="text-center space-y-3">
-          <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" aria-hidden />
-          <p className="text-sm text-muted-foreground">
-            {phase === "submitting" ? "Submitting your answers…" : "Preparing your test…"}
-          </p>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground p-4">
+        <div className="text-center space-y-4">
+          <Loader2 className="size-8 animate-spin text-cyan-400 mx-auto" aria-hidden />
+          <div className="space-y-1">
+            <h2 className="text-lg font-medium text-foreground">
+              {phase === "submitting" ? "Transmitting Exam Answers…" : "Preparing IELTS Exam Room…"}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {phase === "submitting"
+                ? "Autonomous LangGraph AI agents are ready to evaluate your submission."
+                : "Authenticating test session and loading verified stimulus."}
+            </p>
+          </div>
         </div>
       </div>
     )
@@ -408,18 +341,18 @@ export default function TakeTestPage() {
 
   if (phase === "not-found") {
     return (
-      <div className="flex-1 flex items-center justify-center p-6 min-h-[60vh]">
-        <div className="text-center space-y-3 max-w-md">
-          <AlertCircle className="h-8 w-8 text-muted-foreground mx-auto" aria-hidden />
-          <h1 className="text-xl font-semibold">Test not found</h1>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground p-6">
+        <div className="max-w-md text-center space-y-4">
+          <AlertCircle className="size-10 text-muted-foreground mx-auto" aria-hidden />
+          <h1 className="text-xl font-semibold text-foreground">Test Not Found</h1>
           <p className="text-sm text-muted-foreground">
-            The practice test you are looking for does not exist or has been removed.
+            The requested IELTS practice test does not exist or has been retired.
           </p>
           <Link
             href="/skills/listening"
-            className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-2.5 text-sm font-medium text-black hover:bg-neutral-200"
           >
-            Browse practice tests
+            Browse Practice Tests
           </Link>
         </div>
       </div>
@@ -428,12 +361,17 @@ export default function TakeTestPage() {
 
   if (phase === "error" || !test || !attempt) {
     return (
-      <div className="flex-1 flex items-center justify-center p-6 min-h-[60vh]">
-        <div className="text-center space-y-3 max-w-md">
-          <AlertCircle className="h-8 w-8 text-destructive mx-auto" aria-hidden />
-          <h1 className="text-xl font-semibold">Something went wrong</h1>
-          <p className="text-sm text-muted-foreground">{loadError ?? "An unexpected error occurred."}</p>
-          <Button onClick={() => window.location.reload()}>Retry</Button>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground p-6">
+        <div className="max-w-md text-center space-y-4">
+          <AlertCircle className="size-10 text-red-400 mx-auto" aria-hidden />
+          <h1 className="text-xl font-semibold text-foreground">Unable to Enter Exam</h1>
+          <p className="text-sm text-red-200/80">{loadError ?? "An unexpected error occurred."}</p>
+          <Button
+            onClick={() => window.location.reload()}
+            className="rounded-xl bg-white text-black hover:bg-neutral-200"
+          >
+            Retry Connection
+          </Button>
         </div>
       </div>
     )
@@ -441,268 +379,425 @@ export default function TakeTestPage() {
 
   const isWriting = test.skill === "WRITING"
   const isSpeaking = test.skill === "SPEAKING"
+  const isListening = test.skill === "LISTENING"
+  const isReading = test.skill === "READING"
+
+  const questionIds = test.questions.map((q) => q.id)
+  const passageQuestion = test.questions.find((q) => q.passage)
 
   return (
-    <div className="flex-1 bg-surface-subtle">
-      {/* Exam header with timer */}
-      <div className="sticky top-0 z-10 bg-card border-b border-border">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+    <div className="relative min-h-screen bg-background text-foreground flex flex-col">
+      {/* Sound & System Pre-Exam Check Modal */}
+      <ExamSoundCheckModal
+        isOpen={showSoundCheck}
+        skill={test.skill}
+        title={test.title}
+        timeLimitMinutes={test.timeLimitMinutes}
+        questionCount={test.questions.length}
+        onReady={() => setShowSoundCheck(false)}
+      />
+
+      {/* Official IELTS Computer-Delivered Header */}
+      <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur-xl px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-foreground font-mono font-bold text-xs">
+            IELTS
+          </div>
           <div className="min-w-0">
-            <h1 className="text-sm font-semibold truncate">{test.title}</h1>
-            <p className="text-[11px] text-muted-foreground">
-              {test.skill} · {test.timeLimitMinutes} min · {answeredCount}/{test.questions.length} answered
+            <h1 className="text-sm font-semibold truncate text-foreground">{test.title}</h1>
+            <p className="text-[11px] text-muted-foreground flex items-center gap-2">
+              <span className="font-mono text-cyan-300">{test.moduleType}</span>
+              <span>·</span>
+              <span>{test.skill}</span>
+              <span>·</span>
+              <span>
+                {answeredCount}/{test.questions.length} answered
+              </span>
             </p>
           </div>
-          <div
-            className={`flex items-center gap-1.5 rounded-none px-3 py-1 border text-sm font-medium tabular-nums ${
-              secondsLeft !== null && secondsLeft <= 120
-                ? "border-destructive/30 bg-destructive/10 text-destructive"
-                : "border-border bg-surface-subtle text-foreground"
-            }`}
-            aria-live="off"
-          >
-            <Clock className="h-3.5 w-3.5" aria-hidden />
-            {formatClock(secondsLeft ?? 0)}
-          </div>
         </div>
-      </div>
-      {/* Minute-level announcement for assistive tech; the visual pill ticks silently. */}
-      <span className="sr-only" aria-live="polite">
-        {secondsLeft !== null && secondsLeft > 0 && secondsLeft % 60 === 0
-          ? `${Math.ceil(secondsLeft / 60)} minutes remaining`
-          : ""}
-      </span>
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+        {/* Center: Official Countdown Timer */}
+        <div className="flex items-center gap-3">
+          <div
+            className={`flex items-center gap-2 rounded-xl px-3.5 py-1.5 border font-mono text-sm font-semibold tabular-nums shadow-inner transition-colors ${
+              secondsLeft !== null && secondsLeft <= 120
+                ? "border-red-500/50 bg-red-500/20 text-red-300 animate-pulse"
+                : secondsLeft !== null && secondsLeft <= 300
+                  ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
+                  : "border-border bg-surface-subtle text-foreground"
+            }`}
+          >
+            <Clock className="size-4" />
+            <span>{formatClock(secondsLeft ?? 0)}</span>
+          </div>
+
+          {/* Quick Sound Check Trigger */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSoundCheck(true)}
+            className="hidden sm:inline-flex text-xs text-muted-foreground hover:text-foreground hover:bg-card"
+          >
+            <Headphones className="size-3.5 mr-1.5" />
+            <span>Audio Check</span>
+          </Button>
+
+          {saveState === "saved" && (
+            <span className="hidden md:inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
+              <span className="size-1.5 rounded-full bg-emerald-400" /> Saved
+            </span>
+          )}
+          {saveState === "error" && (
+            <span className="hidden md:inline-flex items-center gap-1 text-[11px] text-amber-400 font-mono">
+              <AlertCircle className="size-3" /> Save pending
+            </span>
+          )}
+        </div>
+      </header>
+
+      {/* Main Examination Canvas */}
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
         {draftRestored && (
-          <div className="rounded-lg border border-primary/20 bg-primary/10 text-primary text-xs px-3 py-2 flex items-center gap-2">
-            <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Your unsaved work from a previous session was restored.
+          <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 text-cyan-200 text-xs px-4 py-2.5 flex items-center gap-2">
+            <CheckCircle2 className="size-4 shrink-0 text-cyan-400" />
+            <span>Your unsaved progress from a previous session was securely restored.</span>
           </div>
         )}
 
         {bannerError && (
           <div
             role="alert"
-            className="rounded-lg border border-destructive/30 bg-destructive/10 text-destructive text-xs px-3 py-2.5 flex items-start gap-2"
+            className="rounded-xl border border-red-500/30 bg-red-500/10 text-red-200 text-xs px-4 py-3 flex items-start gap-2.5"
           >
-            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden />
-            {bannerError}
+            <AlertCircle className="size-4 shrink-0 mt-0.5 text-red-400" />
+            <span>{bannerError}</span>
           </div>
         )}
 
-        {saveState === "error" && !bannerError && (
-          <div
-            role="status"
-            className="rounded-lg border border-warning/30 bg-warning/10 text-warning text-xs px-3 py-2.5 flex items-start gap-2"
-          >
-            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden />
-            Autosave could not reach the server. Your work is kept in this browser, but check your
-            connection — answers may not be saved remotely.
-          </div>
+        {/* 1. SPEAKING MODULE: Real AI Voice Examiner Room */}
+        {isSpeaking && (
+          <>
+            <AiSpeakingExaminer
+              questions={test.questions}
+              onRecordingComplete={(audioJoined) => {
+                const firstQ = test.questions[0]
+                if (firstQ) {
+                  setAnswer(firstQ.id, audioJoined)
+                }
+                setSpeakingRecorded(true)
+              }}
+            />
+            <div className="rounded-2xl border border-border bg-surface-subtle p-5 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-medium text-muted-foreground">
+                  No microphone? Type your spoken answer instead — free AI review, no audio service needed.
+                </p>
+                <span className="shrink-0 font-mono text-[11px] text-cyan-300">
+                  {typedSpeakingWords}/40 words
+                </span>
+              </div>
+              <Textarea
+                aria-label="Typed speaking response"
+                value={typedSpeakingText}
+                onChange={(event) => {
+                  const firstQ = test.questions[0]
+                  if (firstQ) setAnswer(firstQ.id, event.target.value)
+                  setSpeakingRecorded(false)
+                }}
+                placeholder="Write the answer you would have spoken…"
+                className="min-h-[160px] border-border bg-surface-subtle text-sm text-foreground placeholder:text-foreground/30"
+              />
+            </div>
+          </>
         )}
 
-        {isWriting ? (
-          <div className="max-w-3xl rounded-xl border border-border bg-card p-4 sm:p-6 space-y-4">
-            {test.questions.map((q) => (
-              <div key={q.id} className="space-y-3">
-                {q.passage && (
-                  <div className="rounded-lg bg-surface-subtle border border-border p-3 text-xs text-muted-foreground leading-relaxed whitespace-pre-line">
-                    {q.passage}
+        {/* 2. WRITING MODULE: IELTS Writing Desk */}
+        {isWriting && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Task Prompt & Stimulus */}
+            <div className="lg:col-span-5 rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl space-y-4">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
+                  WRITING TASK STIMULUS
+                </span>
+                <span className="text-xs font-mono text-cyan-300">ACADEMIC CRITERIA</span>
+              </div>
+
+              {test.questions.map((q) => (
+                <div key={q.id} className="space-y-3">
+                  {q.passage && (
+                    <div className="rounded-2xl border border-border bg-surface-subtle p-4 text-xs leading-relaxed text-muted-foreground whitespace-pre-line font-serif">
+                      {q.passage}
+                    </div>
+                  )}
+                  <div className="text-sm font-medium leading-relaxed text-foreground/95">{q.prompt}</div>
+                  <div className="rounded-xl border border-border bg-surface-subtle p-3 text-[11px] text-muted-foreground space-y-1">
+                    <p className="font-semibold text-muted-foreground">IELTS Writing Guidelines:</p>
+                    <p>• Task 1: Minimum 150 words (20 minutes recommended).</p>
+                    <p>• Task 2: Minimum 250 words (40 minutes recommended).</p>
+                    <p>• Assessed on: Task Achievement, Coherence, Lexical Resource, Grammar.</p>
                   </div>
-                )}
-                <label
-                  htmlFor={`q-${q.id}`}
-                  className="block text-sm font-medium leading-relaxed max-w-prose"
-                >
-                  {q.prompt}
-                </label>
-                <Textarea
-                  id={`q-${q.id}`}
-                  value={answers[q.id] ?? ""}
-                  onChange={(e) => setAnswer(q.id, e.target.value)}
-                  placeholder="Write your response here…"
-                  className="min-h-[320px] text-sm leading-relaxed"
-                />
-                <div className="flex items-center justify-between text-xs">
-                  <span className={essayWordCount >= 20 ? "text-muted-foreground" : "text-destructive"}>
-                    {essayWordCount} words {essayWordCount < 20 && "· minimum 20 words required"}
+                </div>
+              ))}
+            </div>
+
+            {/* Right: Candidate Writing Desk */}
+            <div className="lg:col-span-7 rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl space-y-4">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+                  ESSAY RESPONSE
+                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`font-mono text-xs px-2.5 py-0.5 rounded-full border ${
+                      essayWordCount >= 150
+                        ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                        : essayWordCount >= 20
+                          ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
+                          : "border-border bg-surface-subtle text-muted-foreground"
+                    }`}
+                  >
+                    {essayWordCount} words
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {essayWordCount < 20 ? "(Min 20 required)" : "Ready"}
                   </span>
                 </div>
               </div>
-            ))}
+
+              {test.questions.map((q) => (
+                <Textarea
+                  key={q.id}
+                  id={`q-${q.id}`}
+                  value={answers[q.id] ?? ""}
+                  onChange={(e) => setAnswer(q.id, e.target.value)}
+                  placeholder="Type your IELTS essay here. Focus on formal academic register, clear paragraphing, and evidence…"
+                  className="min-h-[460px] rounded-2xl border-border bg-surface-subtle text-sm leading-relaxed text-foreground placeholder:text-foreground/30 focus:border-cyan-400/40 focus:ring-1 focus:ring-cyan-400/30 p-4 font-sans"
+                />
+              ))}
+
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
+                <span>Autosaved locally & remotely</span>
+                <span>Dual-pass LangGraph AI review active</span>
+              </div>
+            </div>
           </div>
-        ) : isSpeaking ? (
-          <div className="max-w-3xl rounded-xl border border-border bg-card p-4 sm:p-6 space-y-5">
-            {test.questions.map((q) => (
-              <div key={q.id} className="space-y-4">
-                <p className="text-sm font-medium leading-relaxed max-w-prose">{q.prompt}</p>
-                <div className="rounded-lg bg-surface-subtle border border-border p-4 flex flex-col items-center gap-3">
-                  {recordingState === "idle" && (
-                    <Button onClick={startRecording} className="cursor-pointer">
-                      <Mic className="mr-2 h-4 w-4" aria-hidden />
-                      Start recording
-                    </Button>
-                  )}
-                  {recordingState === "requesting" && (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Requesting microphone…
+        )}
+
+        {/* 3. LISTENING MODULE: Real Audio Player + Questions */}
+        {isListening && (
+          <div className="space-y-6">
+            <ListeningAudioPlayer
+              audioUrl={test.questions.find((q) => q.audioUrl)?.audioUrl}
+              dialoguePassage={passageQuestion?.passage}
+              sectionTitle={test.title}
+            />
+
+            <div className="rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-xl space-y-6">
+              <div className="flex items-center justify-between border-b border-border pb-4">
+                <h2 className="text-base font-semibold text-foreground">Questions 1 to {test.questions.length}</h2>
+                <span className="text-xs font-mono text-cyan-300">LISTEN & ANSWER</span>
+              </div>
+
+              <div className="space-y-4">
+                {test.questions.map((q, idx) => (
+                  <div
+                    key={q.id}
+                    className={`rounded-2xl border p-5 transition-all ${
+                      idx === currentQuestionIndex
+                        ? "border-cyan-400/40 bg-surface-subtle shadow-lg shadow-cyan-500/5"
+                        : "border-border bg-surface-subtle"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-medium text-foreground/95 leading-relaxed">
+                        <span className="font-mono text-cyan-400 mr-2">{idx + 1}.</span>
+                        {q.prompt}
+                      </p>
                     </div>
-                  )}
-                  {recordingState === "recording" && (
-                    <>
-                      <div className="flex items-center gap-2 text-sm text-destructive font-medium">
-                        <span className="h-2.5 w-2.5 rounded-none bg-destructive animate-pulse" aria-hidden />
-                        Recording · {formatClock(recordingSeconds)} / 02:00
-                      </div>
-                      <Button variant="destructive" onClick={stopRecording} className="cursor-pointer">
-                        <Square className="mr-2 h-4 w-4" aria-hidden />
-                        Stop recording
-                      </Button>
-                    </>
-                  )}
-                  {recordingState === "recorded" && audioUrl && (
-                    <div className="w-full space-y-3">
-                      <div className="flex items-center gap-2 text-sm text-success">
-                        <CheckCircle2 className="h-4 w-4" aria-hidden />
-                        Recording captured ({formatClock(recordingSeconds)})
-                      </div>
-                      <audio controls src={audioUrl} className="w-full" />                      <Button variant="outline" onClick={startRecording} className="cursor-pointer">
-                        <Play className="mr-2 h-4 w-4" aria-hidden />
-                        Record again
-                      </Button>
+
+                    <div className="mt-4">
+                      {q.options && q.options.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {q.options.map((opt, optIdx) => {
+                            const optId = `q-${q.id}-opt-${optIdx}`
+                            const selected = answers[q.id] === opt.trim()
+                            return (
+                              <label
+                                key={optId}
+                                htmlFor={optId}
+                                className={`flex items-center gap-3 rounded-xl border p-3 text-xs cursor-pointer transition-all ${
+                                  selected
+                                    ? "border-cyan-400 bg-cyan-400/15 text-foreground font-medium"
+                                    : "border-border bg-surface-subtle text-muted-foreground hover:bg-surface-subtle hover:text-foreground"
+                                }`}
+                              >
+                                <input
+                                  id={optId}
+                                  type="radio"
+                                  name={`q-${q.id}`}
+                                  value={opt.trim()}
+                                  checked={selected}
+                                  onChange={(e) => setAnswer(q.id, e.target.value)}
+                                  className="size-4 accent-cyan-400"
+                                />
+                                <span>{opt.trim()}</span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <Input
+                          id={`q-${q.id}`}
+                          type="text"
+                          value={answers[q.id] ?? ""}
+                          onChange={(e) => setAnswer(q.id, e.target.value)}
+                          placeholder="Type answer here (e.g. word or number)…"
+                          className="h-10 rounded-xl border-border bg-surface-subtle text-xs text-foreground placeholder:text-foreground/30"
+                        />
+                      )}
                     </div>
-                  )}
-                  {audioError && (
-                    <p role="alert" className="text-xs text-destructive flex items-center gap-1.5">
-                      <AlertCircle className="h-3.5 w-3.5" aria-hidden /> {audioError}
-                    </p>
-                  )}
-                  <p className="text-[11px] text-muted-foreground text-center max-w-sm">
-                    Your response is submitted to a certified examiner for evaluation. Results
-                    usually appear once review is complete.
-                  </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 4. READING MODULE: Side-by-Side Split View */}
+        {isReading && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Reading Passage with font tools */}
+            <div className="lg:col-span-6 rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl space-y-4 max-h-[75vh] overflow-y-auto">
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-[#10192B]/90 backdrop-blur-md pb-3 pt-1">
+                <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+                  READING PASSAGE
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setReadingFontSize(readingFontSize === "normal" ? "large" : "normal")}
+                    className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface-subtle px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    <ZoomIn className="size-3" />
+                    <span>{readingFontSize === "normal" ? "Larger Font" : "Standard Font"}</span>
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-            {test.questions.some((q) => q.passage) && (
-              <aside className="lg:col-span-2 rounded-xl border border-border bg-card p-4 sm:p-5 max-h-[70vh] overflow-y-auto">
-                <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                  <FileText className="h-3.5 w-3.5" aria-hidden />
-                  Source material
-                </h2>
-                {test.questions
-                  .filter((q) => q.passage)
-                  .map((q) => (
-                    <div key={q.id} className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">
-                      {q.passage}
-                    </div>
-                  ))}
-              </aside>
-            )}
-            <section className={test.questions.some((q) => q.passage) ? "lg:col-span-3 space-y-3" : "lg:col-span-5 space-y-3"}>
-              {test.questions.map((q, index) => (
-                <fieldset key={q.id} className="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-3">
-                  <legend className="sr-only">Question {index + 1}</legend>
-                  {q.audioUrl && (
-                    <div className="space-y-1.5 rounded-lg bg-surface-subtle border border-border p-3">
-                      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                        <Volume2 className="h-3.5 w-3.5" aria-hidden />
-                        Listening audio
-                      </p>
-                      {/* The audio IS the question stimulus for LISTENING sets —
-                          without it the questions are unanswerable. */}
-                      <audio controls src={q.audioUrl} className="w-full" preload="auto">
-                        Your browser does not support audio playback.
-                      </audio>
-                    </div>
-                  )}
-                  <p className="text-sm font-medium leading-relaxed">
-                    <span className="text-muted-foreground mr-2">{index + 1}.</span>
+
+              {passageQuestion?.passage ? (
+                <div
+                  className={`leading-relaxed text-foreground/85 font-serif whitespace-pre-line space-y-3 ${
+                    readingFontSize === "large" ? "text-base leading-8" : "text-sm leading-7"
+                  }`}
+                >
+                  {passageQuestion.passage}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">Read the questions carefully and formulate your answers.</p>
+              )}
+            </div>
+
+            {/* Right: Questions Column */}
+            <div className="lg:col-span-6 space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+              {test.questions.map((q, idx) => (
+                <div
+                  key={q.id}
+                  className="rounded-2xl border border-border bg-surface-subtle p-5 backdrop-blur-xl space-y-3"
+                >
+                  <p className="text-sm font-medium text-foreground/95 leading-relaxed">
+                    <span className="font-mono text-cyan-400 mr-2">{idx + 1}.</span>
                     {q.prompt}
                   </p>
-                  {q.options ? (
+
+                  {q.options && q.options.length > 0 ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {q.options.map((option, optIndex) => {
-                        // Derive the id from the index — label-text-derived ids
-                        // can collide for options differing only in whitespace.
-                        const optionId = `q-${q.id}-opt-${optIndex}`
-                        const selected = answers[q.id] === option.trim()
+                      {q.options.map((opt, optIdx) => {
+                        const optId = `reading-q-${q.id}-opt-${optIdx}`
+                        const selected = answers[q.id] === opt.trim()
                         return (
                           <label
-                            key={optionId}
-                            htmlFor={optionId}
-                            className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm cursor-pointer transition-colors ${
+                            key={optId}
+                            htmlFor={optId}
+                            className={`flex items-center gap-2.5 rounded-xl border p-3 text-xs cursor-pointer transition-all ${
                               selected
-                                ? "border-primary bg-primary/5 text-foreground font-medium"
-                                : "border-border bg-surface-subtle hover:bg-card"
+                                ? "border-cyan-400 bg-cyan-400/15 text-foreground font-medium"
+                                : "border-border bg-surface-subtle text-muted-foreground hover:bg-surface-subtle hover:text-foreground"
                             }`}
                           >
                             <input
-                              id={optionId}
+                              id={optId}
                               type="radio"
-                              name={`q-${q.id}`}
-                              value={option.trim()}
+                              name={`reading-${q.id}`}
+                              value={opt.trim()}
                               checked={selected}
                               onChange={(e) => setAnswer(q.id, e.target.value)}
-                              className="h-4 w-4 accent-primary"
+                              className="size-4 accent-cyan-400"
                             />
-                            {option.trim()}
+                            <span>{opt.trim()}</span>
                           </label>
                         )
                       })}
                     </div>
                   ) : (
                     <Input
-                      id={`q-${q.id}`}
+                      id={`reading-input-${q.id}`}
                       type="text"
                       value={answers[q.id] ?? ""}
                       onChange={(e) => setAnswer(q.id, e.target.value)}
                       placeholder="Type your answer…"
-                      className="h-10"
-                      aria-label={`Answer for question ${index + 1}`}
+                      className="h-10 rounded-xl border-border bg-surface-subtle text-xs text-foreground placeholder:text-foreground/30"
                     />
                   )}
-                </fieldset>
+                </div>
               ))}
-            </section>
+            </div>
           </div>
         )}
 
-        {/* Submit bar */}
-        <div className="rounded-xl border border-border bg-card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
-            {isWriting
-              ? essayWordCount < 20
-                ? "Your essay needs at least 20 words before it can be submitted."
-                : "Ready to submit. AI scoring usually completes within a couple of minutes."
-              : isSpeaking
-                ? recordingState === "recorded"
-                  ? "Your recording is ready to submit."
-                  : "Record your response to enable submission."
-                : `${answeredCount} of ${test.questions.length} questions answered.`}
-          </p>
+        {/* Global Submit Action Bar */}
+        <div className="rounded-3xl border border-border bg-gradient-to-r from-[#16213A]/90 to-[#0A0F1A] p-5 backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
+          <div className="space-y-1">
+            <h4 className="text-sm font-semibold text-foreground">Ready to complete your examination?</h4>
+            <p className="text-xs text-muted-foreground">
+              {isWriting
+                ? essayWordCount < 20
+                  ? "Requires at least 20 words to proceed to AI scoring."
+                  : "All essay criteria are evaluated by autonomous LangGraph agents."
+                : isSpeaking
+                  ? speakingRecorded
+                    ? "Speech recording captured. Submit for free AI review."
+                    : typedSpeakingWords >= 40
+                      ? "Typed response ready for free AI review."
+                      : "Record your speech, or type at least 40 words for a free text-based review."
+                  : `${answeredCount} of ${test.questions.length} questions completed.`}
+            </p>
+          </div>
+
           <Button
             onClick={() => void doSubmit(false)}
             disabled={!canSubmit}
-            title={
-              !canSubmit
-                ? isWriting
-                  ? "Write at least 20 words to submit"
-                  : isSpeaking
-                    ? "Record a response first"
-                    : "Answer at least one question"
-                : undefined
-            }
-            className="cursor-pointer"
+            className="cursor-pointer rounded-xl bg-white px-6 py-2.5 text-sm font-medium text-black hover:bg-neutral-200 disabled:opacity-40 transition-all shadow-md shrink-0"
           >
-            Submit test
+            <span>Submit Test for AI Evaluation</span>
+            <ArrowRight className="size-4 ml-1.5" />
           </Button>
         </div>
-      </div>
+      </main>
+
+      {/* Bottom IELTS Question Navigator Strip (for non-speaking sets) */}
+      {!isSpeaking && !isWriting && test.questions.length > 1 && (
+        <QuestionNavStrip
+          totalQuestions={test.questions.length}
+          currentIndex={currentQuestionIndex}
+          answers={answers}
+          questionIds={questionIds}
+          flaggedIds={flaggedIds}
+          onSelectIndex={setCurrentQuestionIndex}
+          onToggleFlag={toggleFlag}
+        />
+      )}
     </div>
   )
 }
@@ -713,8 +808,6 @@ function draftAnswersToMap(draft: {
 }): Record<string, string> {
   const map: Record<string, string> = {}
   Object.values(draft.answers).forEach((a) => {
-    // Empty entries are kept deliberately: a user who cleared an answer must
-    // not see the older server value resurrect on refresh.
     map[a.questionId] = a.answer
   })
   return map

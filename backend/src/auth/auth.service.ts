@@ -2,15 +2,15 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
 import { Prisma, Role, User } from '@prisma/client';
-
-/** Refresh-token lifetime in days (REFRESH_TOKEN_TTL_DAYS). */
-const REFRESH_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 7);
+import { PasswordResetMailer } from './password-reset-mailer.service';
 
 export interface TokenPair {
   accessToken: string;
@@ -37,7 +37,89 @@ const PROFILE_SELECT = {
  */
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AuthService.name);
+  private static readonly RESET_TTL_MS = 30 * 60 * 1000;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly resetMailer: PasswordResetMailer,
+  ) {}
+
+  /**
+   * Always returns successfully — never reveal whether an account exists.
+   * A previously issued link is consumed so only the newest one is usable.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalized },
+      select: { id: true, email: true },
+    });
+    if (!user) return;
+
+    const raw = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + AuthService.RESET_TTL_MS);
+    await this.prisma.$transaction([
+      this.prisma.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.passwordResetToken.create({
+        data: {
+          tokenHash: this.hashToken(raw),
+          userId: user.id,
+          expiresAt,
+        },
+      }),
+    ]);
+
+    const frontend = (process.env.FRONTEND_URL ?? 'http://localhost:3000')
+      .split(',')[0]
+      .trim();
+    const link = `${frontend}/reset-password?token=${encodeURIComponent(raw)}`;
+    try {
+      await this.resetMailer.send(user.email, link);
+    } catch (error) {
+      // The token is real but the email provider is down: log it, never tell
+      // the caller "sent" if delivery failed.
+      this.logger.error(
+        `Reset email failed for ${user.email}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  /** Single-use, expiring, token-bound password change. Revokes all sessions. */
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    if (!/^[A-Za-z0-9_-]{20,128}$/.test(token)) {
+      throw new BadRequestException('Invalid or expired reset link');
+    }
+    const stored = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash: this.hashToken(token) },
+    });
+    if (
+      !stored ||
+      stored.usedAt !== null ||
+      stored.expiresAt.getTime() <= Date.now()
+    ) {
+      throw new BadRequestException('Invalid or expired reset link');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: stored.userId },
+        data: { passwordHash },
+      }),
+      this.prisma.passwordResetToken.update({
+        where: { id: stored.id },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: stored.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+  }
 
   async register(data: {
     email: string;
@@ -60,7 +142,7 @@ export class AuthService {
           email,
           passwordHash,
           name: data.name,
-          role: Role.STUDENT,
+          role: Role.USER,
           targetBand: data.targetBand ?? 7.0,
         },
       });
@@ -93,6 +175,7 @@ export class AuthService {
         targetBand: true,
         subscriptionTier: true,
         passwordHash: true,
+        status: true,
       },
     });
     if (!user) {
@@ -102,6 +185,11 @@ export class AuthService {
     const isValid = await bcrypt.compare(data.password, user.passwordHash);
     if (!isValid) {
       throw new UnauthorizedException('Invalid email or password');
+    }
+    if (user.status === 'SUSPENDED') {
+      throw new UnauthorizedException(
+        'This account is suspended. Contact support for assistance.',
+      );
     }
 
     const tokens = await this.issueTokens(user);
@@ -166,11 +254,17 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { id: stored.userId },
-      select: PROFILE_SELECT,
+      select: { ...PROFILE_SELECT, status: true },
     });
     if (!user) {
       await this.revokeFamily(stored.familyId);
       throw new UnauthorizedException('Account no longer exists');
+    }
+    if (user.status === 'SUSPENDED') {
+      await this.revokeFamily(stored.familyId);
+      throw new UnauthorizedException(
+        'This account is suspended. Contact support for assistance.',
+      );
     }
 
     return {
@@ -262,7 +356,10 @@ export class AuthService {
   }
 
   private refreshExpiry(): Date {
-    return new Date(Date.now() + REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000);
+    // Read lazily (not at module scope): ConfigModule loads .env during module
+    // init, so import-time reads race the env contract and silently fall back.
+    const days = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 7);
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 
   private hashToken(raw: string): string {

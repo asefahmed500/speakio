@@ -2,9 +2,19 @@
 
 import React, { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { AlertCircle, ArrowRight, BookOpen, FileText, Headphones, Mic } from "lucide-react"
-import { Button, ButtonLink } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
+import {
+  AlertCircle,
+  ArrowRight,
+  BookOpen,
+  FileText,
+  Headphones,
+  Mic,
+  Clock,
+  Sparkles,
+  ShieldCheck,
+  ChevronRight,
+} from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { apiFetch } from "@/lib/api-client"
 
 interface TestSetSummary {
@@ -36,42 +46,53 @@ const SKILL_CONFIG: Record<
   SkillKey,
   {
     title: string
+    subtitle: string
     description: string
     cta: string
     icon: React.ElementType
-    /** Shows a supplementary note for skills with special grading. */
+    criteria: string[]
     note?: string
   }
 > = {
   LISTENING: {
-    title: "Listening",
+    title: "Listening Simulation",
+    subtitle: "IELTS Audio Comprehension & Note Taking",
     description:
-      "Practice sets graded automatically against official-style marking. Answer every question, then submit to see your band instantly.",
-    cta: "Start listening test",
+      "4 continuous sections covering everyday dialogues, orientation lectures, and academic discussions. Auto-graded with official IELTS mark-to-band conversion.",
+    cta: "Start Listening Test",
     icon: Headphones,
+    criteria: ["Section 1: Social Dialogue", "Section 2: Monologue", "Section 3: Academic Discussion", "Section 4: University Lecture"],
+    note: "Official audio plays concurrently. You may enter answers as you listen.",
   },
   READING: {
-    title: "Reading",
+    title: "Reading Simulation",
+    subtitle: "Academic Comprehension & Speed Reading",
     description:
-      "Timed reading passages with automatic scoring. Correct answers and explanations are revealed after submission.",
-    cta: "Start reading test",
+      "Authentic academic articles with split-screen reading. Evaluates skimming, scanning, True/False/Not Given, and argument comprehension.",
+    cta: "Start Reading Test",
     icon: BookOpen,
+    criteria: ["Passage 1: Factual Foundation", "Passage 2: Analytical Narrative", "Passage 3: Complex Argumentation"],
+    note: "Split-screen interface with text size controls and bottom question navigator.",
   },
   WRITING: {
-    title: "Writing",
+    title: "Writing AI Studio",
+    subtitle: "Task 1 & Task 2 Multi-Criteria Rubric",
     description:
-      "Task 1 and Task 2 essays evaluated by the AI examiner against all four official IELTS criteria. Borderline scores go to a human examiner.",
-    cta: "Write essay",
+      "Write your essay on an official IELTS computer-delivered desk. Scored across all 4 official IELTS criteria by autonomous LangGraph AI review agents.",
+    cta: "Begin Writing Exam",
     icon: FileText,
-    note: "Requires a minimum of 20 words per essay. The AI examiner usually returns your band within a couple of minutes.",
+    criteria: ["Task Achievement / Response", "Coherence & Cohesion", "Lexical Resource", "Grammatical Range & Accuracy"],
+    note: "Requires a minimum of 20 words for short exercises. Official exams expect 150 words (Task 1) and 250 words (Task 2).",
   },
   SPEAKING: {
-    title: "Speaking",
+    title: "Speaking Voice Examiner",
+    subtitle: "Interactive AI Senior Examiner Interview",
     description:
-      "Record your response to cue-card prompts using your microphone. Certified examiners review recordings and publish your band.",
-    cta: "Record response",
+      "Speak directly with AI Examiner Dr. Arthur Pendelton. Part 1 interview, Part 2 cue-card with 1-min prep notepad, and Part 3 analytical discussion.",
+    cta: "Enter Examiner Room",
     icon: Mic,
-    note: "Your recording is uploaded securely and reviewed by a certified examiner.",
+    criteria: ["Fluency & Coherence", "Lexical Resource", "Grammatical Range", "Pronunciation & Phonetics"],
+    note: "Recorded audio is transcribed with GLM-ASR and scored with dual-pass AI review agents.",
   },
 }
 
@@ -93,7 +114,6 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
       setError(testsResult.error?.message ?? "Failed to load practice tests.")
       setTests(null)
     } else {
-      // Draft/empty test sets (0 questions) are not takeable — never list them.
       setTests(testsResult.data.filter((t) => t.questionCount > 0))
       setError(null)
     }
@@ -104,7 +124,6 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
   }, [skill])
 
   useEffect(() => {
-    // Deferred to a microtask so the effect body never mutates state synchronously.
     let active = true
     void Promise.resolve().then(() => {
       if (active) return fetchSkillData()
@@ -120,120 +139,210 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
   }
 
   return (
-    <div className="flex-1 bg-surface-subtle">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
-        {/* Header */}
-        <div className="flex items-start gap-3">
-          <div className="shrink-0 w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Icon className="h-5 w-5 text-primary" aria-hidden />
+    <div className="relative min-h-0 bg-background text-foreground">
+      {/* Ambient Lighting Orbs */}
+      <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden>
+        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-cyan-500/10 blur-[130px]" />
+        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-indigo-500/10 blur-[150px]" />
+        <div
+          className="absolute inset-0 opacity-[0.025]"
+          style={{
+            backgroundImage: `linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)`,
+            backgroundSize: "64px 64px",
+          }}
+        />
+      </div>
+
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-8">
+        {/* Skill Hero Card */}
+        <div className="relative overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-[#16213A]/80 via-[#10192B]/90 to-[#0B0E14] p-6 sm:p-8 backdrop-blur-2xl shadow-2xl space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/40 bg-cyan-950/40 text-cyan-300">
+                <Icon className="size-7" />
+              </div>
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-0.5 text-[10px] font-mono tracking-widest text-cyan-300 uppercase">
+                  <span>IELTS OFFICIAL MODULE</span>
+                  <span className="text-muted-foreground">·</span>
+                  <span>{skill}</span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
+                  {config.title}
+                </h1>
+                <p className="text-xs sm:text-sm text-muted-foreground max-w-xl leading-relaxed">
+                  {config.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Quick KPI stats */}
+            <div className="flex items-center gap-3">
+              <div className="rounded-2xl border border-border bg-surface-subtle p-4 text-center min-w-[100px]">
+                <p className="text-[10px] font-mono uppercase text-muted-foreground">LATEST BAND</p>
+                <p className="text-2xl font-bold font-mono text-foreground mt-1 tabular-nums">
+                  {loading ? "…" : summary?.latestBand != null ? summary.latestBand.toFixed(1) : "—"}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-border bg-surface-subtle p-4 text-center min-w-[100px]">
+                <p className="text-[10px] font-mono uppercase text-muted-foreground">ATTEMPTS</p>
+                <p className="text-2xl font-bold font-mono text-foreground mt-1 tabular-nums">
+                  {loading ? "…" : summary?.attemptsCount ?? 0}
+                </p>
+              </div>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">{config.title}</h1>
-            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">{config.description}</p>
+
+          {/* Criteria Pills */}
+          <div className="border-t border-border pt-4 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-mono text-muted-foreground uppercase mr-1">Evaluated on:</span>
+            {config.criteria.map((c, i) => (
+              <span
+                key={i}
+                className="rounded-full border border-border bg-surface-subtle px-3 py-1 text-xs text-muted-foreground font-mono"
+              >
+                {c}
+              </span>
+            ))}
           </div>
+
+          {config.note && (
+            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-200/90 flex items-center gap-2.5">
+              <Sparkles className="size-4 shrink-0 text-cyan-400" />
+              <span>{config.note}</span>
+            </div>
+          )}
         </div>
 
-        {/* Personal stats */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl border border-border bg-card p-4">
-            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Latest band</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">
-              {loading ? "…" : summary?.latestBand != null ? summary.latestBand.toFixed(1) : "—"}
-            </p>
-          </div>
-          <div className="rounded-xl border border-border bg-card p-4">
-            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Attempts</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">
-              {loading ? "…" : (summary?.attemptsCount ?? 0)}
-            </p>
-          </div>
-        </div>
-
-        {config.note && (
-          <p className="rounded-lg border border-border bg-card px-3.5 py-2.5 text-xs text-muted-foreground">
-            {config.note}
-          </p>
-        )}
-
+        {/* Loading Skeleton */}
         {loading && (
-          <div className="space-y-3" role="status" aria-live="polite">
-            <Skeleton className="h-24" />
-            <Skeleton className="h-24" />
-            <span className="sr-only">Loading tests…</span>
+          <div className="space-y-4" role="status" aria-live="polite">
+            <div className="h-28 rounded-2xl border border-border bg-surface-subtle animate-pulse" />
+            <div className="h-28 rounded-2xl border border-border bg-surface-subtle animate-pulse" />
+            <span className="sr-only">Loading practice tests…</span>
           </div>
         )}
 
+        {/* Error State */}
         {!loading && error && (
-          <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-5 text-center space-y-3">
-            <AlertCircle className="h-6 w-6 text-destructive mx-auto" aria-hidden />
-            <p className="text-sm text-destructive">{error}</p>
-            <Button variant="outline" size="sm" onClick={() => retryFetch()}>
-              Retry
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-center space-y-4">
+            <AlertCircle className="size-8 text-red-400 mx-auto" aria-hidden />
+            <p className="text-sm text-red-200/80">{error}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={retryFetch}
+              className="border-border bg-card text-foreground hover:bg-white/20"
+            >
+              Retry Loading Tests
             </Button>
           </div>
         )}
 
+        {/* Empty State */}
         {!loading && !error && tests && tests.length === 0 && (
-          <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center space-y-2">
-            <h2 className="text-base font-semibold">No practice tests available yet</h2>
-            <p className="text-sm text-muted-foreground">
-              New {config.title.toLowerCase()} tests are being prepared. Check back soon.
+          <div className="rounded-3xl border border-border bg-surface-subtle p-8 text-center space-y-3">
+            <ShieldCheck className="size-8 text-cyan-400 mx-auto" />
+            <h2 className="text-base font-semibold text-foreground">No Practice Sets Available</h2>
+            <p className="text-xs text-muted-foreground">
+              New {config.title.toLowerCase()} materials are being synchronized. Please check back shortly.
             </p>
           </div>
         )}
 
+        {/* Test Sets List */}
         {!loading && !error && tests && tests.length > 0 && (
-          <ul className="space-y-3">
-            {tests.map((test) => (
-              <li
-                key={test.id}
-                className="rounded-xl border border-border bg-card p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-              >
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold truncate">{test.title}</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {test.questionCount} {test.questionCount === 1 ? "question" : "questions"} ·{" "}
-                    {test.timeLimitMinutes} min · {test.moduleType}
-                  </p>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">Available Practice Sets</h2>
+                <p className="text-xs text-muted-foreground">Timed IELTS exam sets with full multi-agent diagnostic</p>
+              </div>
+              <span className="text-xs font-mono text-muted-foreground">{tests.length} SETS AVAILABLE</span>
+            </div>
+
+            <div className="space-y-3">
+              {tests.map((test) => (
+                <div
+                  key={test.id}
+                  className="group relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 overflow-hidden rounded-2xl border border-border bg-gradient-to-r from-white/[0.03] to-white/[0.01] p-5 backdrop-blur-xl transition-all hover:border-cyan-400/40 hover:bg-surface-subtle hover:shadow-lg hover:shadow-cyan-500/5"
+                >
+                  <div className="space-y-1.5 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-mono text-cyan-300">
+                        {test.moduleType}
+                      </span>
+                      <span className="text-xs font-mono text-muted-foreground">·</span>
+                      <span className="text-xs font-mono text-muted-foreground flex items-center gap-1">
+                        <Clock className="size-3" /> {test.timeLimitMinutes} min
+                      </span>
+                      <span className="text-xs font-mono text-muted-foreground">·</span>
+                      <span className="text-xs font-mono text-muted-foreground">
+                        {test.questionCount} {test.questionCount === 1 ? "question" : "questions"}
+                      </span>
+                    </div>
+
+                    <h3 className="text-base font-medium text-foreground group-hover:text-cyan-300 transition-colors truncate">
+                      {test.title}
+                    </h3>
+                  </div>
+
+                  <Link
+                    href={`/test/${test.id}/take`}
+                    className="shrink-0 inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-2.5 text-xs font-medium text-black hover:bg-neutral-200 shadow-md transition-all active:scale-95 self-start sm:self-auto"
+                  >
+                    <span>{config.cta}</span>
+                    <ArrowRight className="size-3.5" />
+                  </Link>
                 </div>
-                <ButtonLink size="sm" className="cursor-pointer self-start sm:self-auto shrink-0" href={`/test/${test.id}/take`}>
-                  {config.cta} <ArrowRight className="ml-1.5 h-3.5 w-3.5" aria-hidden />
-                </ButtonLink>
-              </li>
-            ))}
-          </ul>
+              ))}
+            </div>
+          </div>
         )}
 
-        {/* Attempt history */}
+        {/* Recent Attempts History */}
         {!loading && summary && summary.attempts.length > 0 && (
-          <div className="rounded-xl border border-border bg-card p-5">
-            <h2 className="text-sm font-semibold mb-3">Recent {config.title.toLowerCase()} attempts</h2>
-            <ul className="space-y-2">
-              {summary.attempts.slice(0, 5).map((attempt) => (
-                <li key={attempt.id}>
-                  <Link
-                    href={`/results/${attempt.id}`}
-                    className="flex items-center justify-between gap-3 rounded-lg bg-surface-subtle border border-border px-3.5 py-2.5 hover:bg-card transition-colors"
-                  >
-                    <span className="text-xs font-medium truncate">{attempt.title}</span>
-                    <span className="flex items-center gap-2 shrink-0">
-                      {attempt.submittedAt && (
-                        <span className="text-[11px] text-muted-foreground">
-                          {new Date(attempt.submittedAt).toLocaleDateString()}
-                        </span>
-                      )}
-                      <span className="text-xs font-semibold tabular-nums">
-                        {attempt.bandScore != null ? attempt.bandScore.toFixed(1) : "—"}
-                      </span>
+          <div className="rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">Recent {config.title} History</h2>
+                <p className="text-xs text-muted-foreground">Review candidate diagnostic records and scorecards</p>
+              </div>
+              <span className="text-xs font-mono text-muted-foreground">LATEST {summary.attempts.length} ATTEMPTS</span>
+            </div>
+
+            <div className="space-y-2.5">
+              {summary.attempts.slice(0, 6).map((attempt) => (
+                <Link
+                  key={attempt.id}
+                  href={`/results/${attempt.id}`}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-subtle p-4 transition-all hover:border-white/25 hover:bg-surface-subtle"
+                >
+                  <div className="min-w-0 space-y-0.5">
+                    <p className="text-sm font-medium text-foreground truncate">{attempt.title}</p>
+                    {attempt.submittedAt && (
+                      <p className="text-xs text-muted-foreground">
+                        Submitted {new Date(attempt.submittedAt).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="rounded-lg border border-border bg-card px-2.5 py-1 font-mono text-sm font-semibold text-foreground tabular-nums">
+                      {attempt.bandScore != null ? `Band ${attempt.bandScore.toFixed(1)}` : "In Evaluation"}
                     </span>
-                  </Link>
-                </li>
+                    <ChevronRight className="size-4 text-muted-foreground" />
+                  </div>
+                </Link>
               ))}
-            </ul>
+            </div>
           </div>
         )}
       </div>
     </div>
   )
 }
-

@@ -1,9 +1,9 @@
 import { cookies } from "next/headers"
 import { API_URL } from "@/lib/api-client"
-import { isAdmin, isStaff, type SessionResult, type SessionUser } from "@/lib/user"
+import { isAdmin, type SessionResult, type SessionUser } from "@/lib/user"
 
 export type { SessionResult, SessionUser, StudyPlanMilestone } from "@/lib/user"
-export { isAdmin, isStaff }
+export { isAdmin }
 
 /**
  * Server-side session resolution. Verifies the httpOnly cookie against the

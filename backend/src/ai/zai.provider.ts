@@ -12,6 +12,8 @@ export interface GenerateOptions {
   temperature?: number;
   maxTokens?: number;
   responseFormat?: { type: 'json_object' | 'text' };
+  /** Per-request timeout override (the client default is 90s). */
+  timeoutMs?: number;
 }
 
 export interface GenerateResult {
@@ -26,6 +28,44 @@ export interface GenerateResult {
 export class ZaiProvider {
   private readonly logger = new Logger(ZaiProvider.name);
   private client: OpenAI | null = null;
+
+  /**
+   * Small in-process circuit breaker. A sustained provider outage (429 quota,
+   * timeouts) opens the circuit so callers fail fast instead of spending the
+   * full retry ladder on every request. Half-open probes allow recovery.
+   */
+  private breaker = {
+    failures: 0,
+    openUntil: 0,
+    halfOpen: false,
+  };
+  private static readonly FAILURE_THRESHOLD = 5;
+  private static readonly COOLDOWN_MS = 60_000;
+
+  private assertAvailable(): void {
+    const now = Date.now();
+    if (this.breaker.openUntil > now) {
+      throw new Error(
+        `AI provider circuit open for another ${Math.ceil((this.breaker.openUntil - now) / 1000)}s`,
+      );
+    }
+    if (this.breaker.halfOpen) return;
+    if (this.breaker.failures >= ZaiProvider.FAILURE_THRESHOLD) {
+      this.breaker.openUntil = now + ZaiProvider.COOLDOWN_MS;
+      this.breaker.halfOpen = true;
+      throw new Error('AI provider circuit opened after repeated failures');
+    }
+  }
+
+  private recordSuccess(): void {
+    this.breaker.failures = 0;
+    this.breaker.openUntil = 0;
+    this.breaker.halfOpen = false;
+  }
+
+  private recordFailure(): void {
+    if (!this.breaker.halfOpen) this.breaker.failures += 1;
+  }
 
   /**
    * Lazily constructs the OpenAI-compatible client. Validating in the
@@ -45,7 +85,9 @@ export class ZaiProvider {
         apiKey,
         baseURL,
         timeout: 90_000,
-        maxRetries: 0,
+        // The SDK's built-in exponential backoff absorbs transient network
+        // blips and 429/5xx without failing the whole task chain.
+        maxRetries: 2,
       });
       this.logger.log(`Initialized Z.AI Provider pointing to ${baseURL}`);
     }
@@ -53,17 +95,22 @@ export class ZaiProvider {
   }
 
   async generate(options: GenerateOptions): Promise<GenerateResult> {
+    this.assertAvailable();
     try {
-      const response = await this.getClient().chat.completions.create({
-        model: options.model,
-        messages: options.messages,
-        temperature: options.temperature ?? 0.2,
-        max_tokens: options.maxTokens ?? 2048,
-        response_format: options.responseFormat,
-      });
+      const response = await this.getClient().chat.completions.create(
+        {
+          model: options.model,
+          messages: options.messages,
+          temperature: options.temperature ?? 0.2,
+          max_tokens: options.maxTokens ?? 2048,
+          response_format: options.responseFormat,
+        },
+        options.timeoutMs ? { timeout: options.timeoutMs } : undefined,
+      );
 
       const choice = response.choices[0];
       const usage = response.usage;
+      this.recordSuccess();
 
       return {
         content: choice?.message?.content || '',
@@ -73,12 +120,41 @@ export class ZaiProvider {
         model: response.model,
       };
     } catch (error) {
+      this.recordFailure();
       const message = error instanceof Error ? error.message : String(error);
       const stack = error instanceof Error ? error.stack : undefined;
       this.logger.error(
         `Z.AI generation failed on model ${options.model}: ${message}`,
         stack,
       );
+      throw error;
+    }
+  }
+
+  /**
+   * GLM-ASR speech-to-text. `audioBase64` must be a complete WAV/MP3 file of
+   * ≤30 seconds (provider limit) — segmenting happens upstream.
+   */
+  async transcribe(audioBase64: string): Promise<string> {
+    this.assertAvailable();
+    try {
+      const buffer = Buffer.from(audioBase64, 'base64');
+      // Node 20+ exposes File globally; the SDK uploads it as multipart form.
+      const file = new File([buffer], 'segment.wav', { type: 'audio/wav' });
+      const response = await this.getClient().audio.transcriptions.create(
+        {
+          model: process.env.ZAI_MODEL_ASR || 'glm-asr-2512',
+          file: file,
+        },
+        { timeout: 120_000 },
+      );
+      this.recordSuccess();
+      return (response as { text?: string }).text?.trim() ?? '';
+    } catch (error) {
+      this.recordFailure();
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Z.AI transcription failed: ${message}`, stack);
       throw error;
     }
   }

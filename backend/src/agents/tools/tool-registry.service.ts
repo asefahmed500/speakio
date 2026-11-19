@@ -30,10 +30,12 @@ interface BandScoreArgs {
   criteriaScores: number[];
 }
 
-interface FlagReviewArgs {
+interface ReviewDecisionArgs {
   attemptId: string;
   skill: SkillType;
   proposedBand: number;
+  finalBand: number;
+  status: string;
   notes: string;
 }
 
@@ -69,7 +71,7 @@ export class ToolRegistryService {
         // Authorization: owner or instructor/admin
         if (
           attempt.userId !== userContext.userId &&
-          !['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(userContext.role)
+          !['ADMIN'].includes(userContext.role)
         ) {
           throw new ForbiddenException('Unauthorized access to attempt');
         }
@@ -106,51 +108,72 @@ export class ToolRegistryService {
       },
     });
 
-    // Tool 3: flagForInstructorReview (MEDIUM risk)
+    // Tool 3: recordReviewDecision (MEDIUM risk) — the AI review agents'
+    // audit trail. Every automated band decision is persisted for the admin
+    // AI-review monitor; admins may override afterwards.
     this.registerTool({
-      name: 'flagForInstructorReview',
+      name: 'recordReviewDecision',
       description:
-        'Routes an AI-scored submission below confidence threshold to the instructor review queue',
+        'Persists an AI review decision (proposed band, final band, confidence notes) to the review audit trail',
       riskLevel: 'MEDIUM',
       run: async (rawArgs) => {
-        const args = expectArgs<FlagReviewArgs>(rawArgs);
+        const args = expectArgs<ReviewDecisionArgs>(rawArgs);
         const existing = await this.prisma.reviewQueueItem.findUnique({
           where: { attemptId: args.attemptId },
         });
-        // Never reopen an item an examiner has already resolved.
-        if (existing && existing.status !== 'PENDING') {
+        const data = {
+          skill: args.skill,
+          status: args.status,
+          proposedBand: args.proposedBand,
+          finalBand: args.finalBand,
+          instructorNotes: args.notes,
+          reviewedAt: new Date(),
+        };
+        if (existing && ['OVERRIDDEN'].includes(existing.status)) {
+          // An admin override is final — AI must not rewrite it.
           return existing;
         }
         if (existing) {
-          // Conditional update (not an upsert with a PENDING write): a rescore
-          // racing an examiner's resolve must not flip a resolved item back to
-          // PENDING — the status precondition makes that race impossible.
-          const reopened = await this.prisma.reviewQueueItem.updateMany({
-            where: { id: existing.id, status: 'PENDING' },
-            data: {
-              proposedBand: args.proposedBand,
-              instructorNotes: args.notes,
-            },
+          const updated = await this.prisma.reviewQueueItem.updateMany({
+            where: { id: existing.id, status: { not: 'OVERRIDDEN' } },
+            data,
           });
-          if (reopened.count === 0) {
-            const resolved = await this.prisma.reviewQueueItem.findUnique({
+          if (updated.count === 0) {
+            return this.prisma.reviewQueueItem.findUnique({
               where: { id: existing.id },
             });
-            return resolved;
           }
           return this.prisma.reviewQueueItem.findUnique({
             where: { id: existing.id },
           });
         }
-        return this.prisma.reviewQueueItem.create({
-          data: {
-            attemptId: args.attemptId,
-            skill: args.skill,
-            proposedBand: args.proposedBand,
-            instructorNotes: args.notes,
-            status: 'PENDING',
-          },
-        });
+        try {
+          return await this.prisma.reviewQueueItem.create({
+            data: { attemptId: args.attemptId, ...data },
+          });
+        } catch (error) {
+          // Lost a create race against a concurrent audit write for the same
+          // attempt — fall through to the guarded update instead of failing
+          // the whole scoring run with P2002.
+          if ((error as { code?: string }).code === 'P2002') {
+            const updated = await this.prisma.reviewQueueItem.updateMany({
+              where: {
+                attemptId: args.attemptId,
+                status: { not: 'OVERRIDDEN' },
+              },
+              data,
+            });
+            if (updated.count === 0) {
+              return this.prisma.reviewQueueItem.findUnique({
+                where: { attemptId: args.attemptId },
+              });
+            }
+            return this.prisma.reviewQueueItem.findUnique({
+              where: { attemptId: args.attemptId },
+            });
+          }
+          throw error;
+        }
       },
     });
   }

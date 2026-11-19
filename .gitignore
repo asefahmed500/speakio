@@ -28,6 +28,24 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# local dev artifacts
+/.dev-server.log
+/.dev-server.err.log
+/.shots
+/.e2e-*.log
+/.front.log
+/.fg-*.log
+/.deploy/
+/.open-next/
+/.wrangler/
+/backups/
+/backend/.srv-*.log
+/backend/.fg-*.log
+/backend/.e2e-*.log
+/backend/*.log
+/backend/.wrangler/
+/.wrangler/
+
 # env files (can opt-in for committing if needed)
 .env*
 

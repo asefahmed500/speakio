@@ -4,46 +4,27 @@ import React, { useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
-  BookOpen,
-  Headphones,
-  FileText,
-  Mic,
-  Award,
-  BarChart3,
-  Cpu,
-  LogOut,
-  PanelRight,
-  Compass,
-  CheckCircle2,
-  Calendar,
-  BookMarked,
+  BookOpen, Headphones, FileText, Mic, Award, BarChart3, Cpu, LogOut,
+  PanelRight, Compass, CheckCircle2, Calendar, BookMarked, ListChecks,
+  UserCog, GraduationCap, LayoutDashboard, Database, Users,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ConfirmationModal } from "@/components/ui/confirmation-modal"
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuBadge,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  useSidebar,
+  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
+  SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuBadge,
+  SidebarMenuButton, SidebarMenuItem, SidebarProvider, useSidebar,
 } from "@/components/ui/sidebar"
 import { UserSessionProvider, useSessionUser } from "@/components/user-session-provider"
 import { SpeakioMark } from "@/components/logo"
 import { apiFetch } from "@/lib/api-client"
 import { useExamStore } from "@/stores/use-exam-store"
-import { isAdmin, isStaff, type SessionUser } from "@/lib/user"
+import { isAdmin, type SessionUser } from "@/lib/user"
+import { canAccessRoute } from "@/lib/rbac/permissions"
 
 const studentNavItems = [
   { name: "Dashboard", href: "/dashboard", icon: BarChart3 },
+  { name: "My Results", href: "/results", icon: ListChecks },
   { name: "Study Planner", href: "/study-plan", icon: Calendar },
   { name: "Vocabulary Studio", href: "/vocabulary", icon: BookMarked },
   { name: "Listening", href: "/skills/listening", icon: Headphones },
@@ -51,11 +32,15 @@ const studentNavItems = [
   { name: "Writing AI", href: "/skills/writing", icon: FileText, badge: "AI Graded" },
   { name: "Speaking", href: "/skills/speaking", icon: Mic },
   { name: "Certificates", href: "/certificates", icon: Award },
+  { name: "Profile", href: "/profile", icon: UserCog },
 ]
-
-const staffNavItems = [
+const adminNavItems = [
+  { name: "Overview", href: "/overview", icon: LayoutDashboard },
+  { name: "AI Reviews", href: "/review-queue", icon: CheckCircle2 },
   { name: "Agent Ops", href: "/agent-ops", icon: Cpu },
-  { name: "Review Queue", href: "/review-queue", icon: CheckCircle2 },
+  { name: "Students", href: "/students", icon: GraduationCap },
+  { name: "Users", href: "/users", icon: Users },
+  { name: "Question Bank", href: "/question-bank", icon: Database },
 ]
 
 interface NavItem {
@@ -65,11 +50,7 @@ interface NavItem {
   badge?: string
 }
 
-/**
- * Single open/close control for the sidebar on every breakpoint.
- * Mobile: opens/closes the drawer Sheet. Desktop: collapses/expands the rail.
- * Uses the PanelRight glyph per the Speakio shell spec.
- */
+/** Single open/close control for the sidebar on every breakpoint. */
 function SidebarPanelToggle({ className }: { className?: string }) {
   const { isMobile, open, openMobile, toggleSidebar } = useSidebar()
   const expanded = isMobile ? openMobile : open
@@ -92,14 +73,14 @@ function NavSection({ label, items }: { label: string; items: NavItem[] }) {
   const { setOpenMobile } = useSidebar()
   return (
     <SidebarGroup className="p-2">
-      <SidebarGroupLabel className="rounded-none px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+      <SidebarGroupLabel className="px-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu className="gap-1">
+        <SidebarMenu className="gap-0.5">
           {items.map((item) => {
             const Icon = item.icon
-            const isActive = pathname === item.href
+            const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
             return (
               <SidebarMenuItem key={item.name}>
                 <SidebarMenuButton
@@ -112,15 +93,13 @@ function NavSection({ label, items }: { label: string; items: NavItem[] }) {
                   }
                   isActive={isActive}
                   tooltip={item.name}
-                  className="h-9 rounded-none border border-transparent px-3 text-xs data-active:border-border data-active:bg-card data-active:shadow-xs"
+                  className="h-9 rounded-none border border-transparent px-3 text-xs data-active:border-border data-active:bg-surface-subtle"
                 >
-                  <Icon className={isActive ? "text-primary" : "text-muted-foreground"} />
-                  <span className={isActive ? "font-medium text-primary" : "text-foreground/80"}>
-                    {item.name}
-                  </span>
+                  <Icon className="text-muted-foreground data-[active=true]:text-foreground" />
+                  <span className="text-foreground/80">{item.name}</span>
                 </SidebarMenuButton>
                 {item.badge && (
-                  <SidebarMenuBadge className="rounded-none border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  <SidebarMenuBadge className="rounded-none border border-border bg-surface-subtle px-1.5 py-0.5 text-[10px] text-muted-foreground">
                     {item.badge}
                   </SidebarMenuBadge>
                 )}
@@ -140,42 +119,31 @@ function CollapsedRailReveal() {
     <button
       type="button"
       onClick={() => setOpen(true)}
-      aria-expanded={false}
       aria-label="Open navigation sidebar"
-      className="fixed top-4 left-4 z-30 inline-flex size-9 cursor-pointer items-center justify-center rounded-none border border-border bg-card text-muted-foreground shadow-xs transition-colors hover:text-foreground"
+      className="fixed top-4 left-4 z-30 inline-flex size-9 cursor-pointer items-center justify-center rounded-none border border-border bg-card text-muted-foreground shadow-xs"
     >
       <PanelRight className="size-4" />
     </button>
   )
 }
 
-function StudentShellContent({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+function AppShellContent({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const user = useSessionUser()
   const [showLogoutModal, setShowLogoutModal] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
-
-  const staff = isStaff(user.role)
   const admin = isAdmin(user.role)
-  const activeTest: NavItem = { name: "Start a Practice Test", href: "/skills/listening", icon: Compass }
 
   const handleConfirmLogout = async () => {
     setIsLoggingOut(true)
     setLogoutError(null)
     const { error } = await apiFetch("/auth/logout", { method: "POST" })
     if (error) {
-      // Never fake success: the httpOnly cookie was not cleared server-side,
-      // so redirecting would leave the user "signed in" again on next visit.
       setLogoutError(error.message)
       setIsLoggingOut(false)
       return
     }
-    // Never leave an exam draft (essay text, answers) on a shared machine.
     useExamStore.getState().clearExamDraft()
     setIsLoggingOut(false)
     setShowLogoutModal(false)
@@ -184,8 +152,8 @@ function StudentShellContent({
 
   return (
     <SidebarProvider>
-      {/* Mobile top bar — PanelRight opens the drawer. */}
-      <div className="fixed top-0 left-0 right-0 z-40 flex h-14 items-center justify-between border-b border-border bg-background px-4 md:hidden">
+      {/* Mobile header — one fixed bar, main area gets matching top padding. */}
+      <div className="fixed top-0 left-0 right-0 z-40 flex h-14 items-center justify-between border-b border-border bg-card/95 px-4 backdrop-blur-sm md:hidden">
         <Link href="/dashboard" className="flex items-center gap-2" aria-label="Speakio dashboard">
           <SpeakioMark className="size-7" />
           <span className="text-sm font-semibold tracking-tight">SPEAKIO</span>
@@ -193,43 +161,43 @@ function StudentShellContent({
         <SidebarPanelToggle />
       </div>
 
-      <Sidebar side="left" collapsible="offcanvas" className="border-r border-border bg-surface-subtle">
+      <Sidebar side="left" collapsible="offcanvas" className="border-r border-border bg-card">
         <SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border p-2">
           <Link href="/dashboard" className="flex items-center gap-3" aria-label="Speakio dashboard">
             <SpeakioMark className="size-8 shrink-0" />
             <div className="flex flex-col">
-              <span className="text-sm font-semibold tracking-tight text-foreground">SPEAKIO</span>
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                IELTS Academic
-              </span>
+              <span className="text-sm font-semibold tracking-tight">SPEAKIO</span>
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">IELTS Academic</span>
             </div>
           </Link>
-          {/* PanelRight closes the drawer on mobile / collapses on desktop. */}
           <SidebarPanelToggle />
         </SidebarHeader>
 
-        <SidebarContent>
-          <NavSection label="Preparation" items={studentNavItems} />
-          <NavSection label="Practice" items={[activeTest]} />
-          {staff && (
+        <SidebarContent className="px-1 py-2">
+          <NavSection
+            label="Preparation"
+            items={studentNavItems.filter((item) => canAccessRoute(user.role, item.href))}
+          />
+          <NavSection label="Practice" items={[{ name: "Start a Practice Test", href: "/skills/listening", icon: Compass }]} />
+          {admin && (
             <NavSection
               label="Administration"
-              items={admin ? staffNavItems : staffNavItems.filter((i) => i.name !== "Agent Ops")}
+              items={adminNavItems.filter((item) => canAccessRoute(user.role, item.href))}
             />
           )}
         </SidebarContent>
 
         <SidebarFooter className="border-t border-border bg-card p-3">
-          <div className="flex items-center justify-between gap-2 rounded-none border border-border bg-surface-subtle p-3">
-            <div className="flex min-w-0 flex-col">
+          <div className="flex items-center justify-between gap-2 border border-border bg-surface-subtle p-3">
+            <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className="truncate text-xs font-semibold text-foreground">{user.name}</span>
-                <span className="rounded-none border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] uppercase text-primary">
+                <span className="truncate text-xs font-semibold">{user.name}</span>
+                <span className="border border-border bg-card px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
                   {user.role}
                 </span>
               </div>
               <span className="truncate text-[11px] text-muted-foreground">
-                Target: <span className="font-medium text-primary">Band {(user.targetBand ?? 7.0).toFixed(1)}</span>
+                Target: <span className="font-medium">Band {(user.targetBand ?? 7.0).toFixed(1)}</span>
               </span>
             </div>
             <Button
@@ -237,7 +205,7 @@ function StudentShellContent({
               size="sm"
               onClick={() => setShowLogoutModal(true)}
               aria-label="Sign out"
-              className="shrink-0 cursor-pointer gap-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              className="shrink-0 cursor-pointer gap-1.5 text-muted-foreground hover:text-destructive"
             >
               <LogOut className="h-3.5 w-3.5" />
               Sign out
@@ -246,65 +214,40 @@ function StudentShellContent({
         </SidebarFooter>
       </Sidebar>
 
-      {/* Desktop: when the rail is collapsed this is the only way back in. */}
       <CollapsedRailReveal />
 
-      <SidebarInset className="min-w-0 pt-14 md:pt-0">{children}</SidebarInset>
+      {/* One main content area for every route inside this shell. */}
+      <SidebarInset className="flex min-w-0 flex-1 flex-col bg-background pt-14 md:pt-0">
+        {children}
+      </SidebarInset>
 
-      <LogoutConfirmModal
+      <ConfirmationModal
         isOpen={showLogoutModal}
-        isLoggingOut={isLoggingOut}
-        logoutError={logoutError}
-        user={user}
+        title="Sign out?"
+        description={
+          logoutError
+            ? `Sign out failed: ${logoutError} Your session is still active — please try again.`
+            : "You will be signed out of all devices. Your saved practice work stays in your account."
+        }
+        intent={logoutError ? "destructive" : "warning"}
+        confirmLabel="Sign out"
+        cancelLabel="Stay signed in"
+        isSubmitting={isLoggingOut}
         onConfirm={handleConfirmLogout}
         onCancel={() => {
           setShowLogoutModal(false)
           setLogoutError(null)
         }}
+        details={`${user.name} (${user.email})`}
       />
     </SidebarProvider>
   )
 }
 
-function LogoutConfirmModal({
-  isOpen,
-  isLoggingOut,
-  logoutError,
-  user,
-  onConfirm,
-  onCancel,
-}: {
-  isOpen: boolean
-  isLoggingOut: boolean
-  logoutError: string | null
-  user: SessionUser
-  onConfirm: () => void
-  onCancel: () => void
-}) {
-  return (
-    <ConfirmationModal
-      isOpen={isOpen}
-      title="Sign Out of Speakio?"
-      description={
-        logoutError
-          ? `Sign out failed: ${logoutError} Your session is still active — please try again.`
-          : "Are you sure you want to sign out? Your session will be terminated and you will need to sign in again to access your practice modules."
-      }
-      intent={logoutError ? "destructive" : "warning"}
-      confirmLabel="Sign Out"
-      cancelLabel="Stay Signed In"
-      isSubmitting={isLoggingOut}
-      onConfirm={onConfirm}
-      onCancel={onCancel}
-      details={`User: ${user.name} (${user.email}) | Role: ${user.role}`}
-    />
-  )
-}
-
-export function StudentShell({ user, children }: { user: SessionUser; children: React.ReactNode }) {
+export function AppShell({ user, children }: { user: SessionUser; children: React.ReactNode }) {
   return (
     <UserSessionProvider user={user}>
-      <StudentShellContent>{children}</StudentShellContent>
+      <AppShellContent>{children}</AppShellContent>
     </UserSessionProvider>
   )
 }

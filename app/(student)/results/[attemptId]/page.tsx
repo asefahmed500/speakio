@@ -10,6 +10,9 @@ import {
   Clock,
   ArrowLeft,
   FileText,
+  ArrowRight,
+  ShieldCheck,
+  Bot,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { apiFetch } from "@/lib/api-client"
@@ -32,12 +35,16 @@ interface AttemptResult {
     coherenceCohesion: number | null
     lexicalResource: number | null
     grammaticalAccuracy: number | null
+    fluencyCoherence: number | null
+    pronunciation: number | null
     feedbackSummary: string | null
     inlineFeedbackJson: unknown
     scoredBy: string
     confidence: number | null
     createdAt: string
   } | null
+  questions: Array<{ id: string; prompt: string; questionType: string }>
+  answers: Record<string, string> | null
   answerText: string | null
 }
 
@@ -47,7 +54,6 @@ interface AutoGradeDetail {
   total?: number
 }
 
-/** Shape persisted by the writing AI agent inside inlineFeedbackJson. */
 interface InlineCorrection {
   originalText: string
   correctedText: string
@@ -56,9 +62,26 @@ interface InlineCorrection {
 
 interface WritingFeedback {
   criterionFeedback?: Partial<
-    Record<"taskAchievement" | "coherenceCohesion" | "lexicalResource" | "grammaticalAccuracy", string>
+    Record<
+      | "taskAchievement"
+      | "coherenceCohesion"
+      | "lexicalResource"
+      | "grammaticalAccuracy"
+      | "fluencyCoherence"
+      | "pronunciation",
+      string
+    >
   >
+  transcript?: string
   inlineCorrections?: InlineCorrection[]
+}
+
+function getCefrLevel(band: number): string {
+  if (band >= 8.5) return "C2 Mastery / Native Proficiency"
+  if (band >= 7.0) return "C1 Operational / Advanced"
+  if (band >= 5.5) return "B2 Independent / Upper Intermediate"
+  if (band >= 4.0) return "B1 Threshold / Intermediate"
+  return "A2 Waystage / Elementary"
 }
 
 export default function ResultPage() {
@@ -88,7 +111,6 @@ export default function ResultPage() {
   }, [attemptId])
 
   useEffect(() => {
-    // Deferred to a microtask so the effect body never mutates state synchronously.
     let active = true
     void Promise.resolve().then(() => {
       if (active) return fetchResult()
@@ -98,11 +120,10 @@ export default function ResultPage() {
     }
   }, [fetchResult])
 
-  // While the AI examiner is scoring, poll until a terminal status arrives —
-  // without this the "Scoring in progress" panel never updates by itself.
+  // While AI scoring is in flight, poll every 8 seconds until completed
   useEffect(() => {
-    if (result?.status !== "SCORING") return
-    const interval = setInterval(() => void fetchResult(), 10_000)
+    if (result?.status !== "SCORING" && result?.status !== "NEEDS_REVIEW") return
+    const interval = setInterval(() => void fetchResult(), 8_000)
     return () => clearInterval(interval)
   }, [result?.status, fetchResult])
 
@@ -123,10 +144,11 @@ export default function ResultPage() {
   const rescore = async () => {
     setRescoring(true)
     setRescoreError(null)
-    const { error: rescoreError } = await apiFetch(`/attempts/${attemptId}/rescore`, { method: "POST" })
+    const { error: rescoreError } = await apiFetch(`/attempts/${attemptId}/rescore`, {
+      method: "POST",
+      timeoutMs: 0,
+    })
     if (rescoreError) {
-      // Keep the result view mounted — swapping the whole page for the
-      // generic error screen would discard the retry affordance itself.
       setRescoreError(rescoreError.message)
     } else {
       await fetchResult()
@@ -136,10 +158,10 @@ export default function ResultPage() {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center min-h-[60vh] bg-surface-subtle" role="status" aria-live="polite">
-        <div className="text-center space-y-3">
-          <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" aria-hidden />
-          <p className="text-sm text-muted-foreground">Loading your result…</p>
+      <div className="flex min-h-0 flex-col items-center justify-center bg-background text-foreground p-4">
+        <div className="text-center space-y-4">
+          <Loader2 className="size-8 animate-spin text-cyan-400 mx-auto" aria-hidden />
+          <p className="text-sm text-muted-foreground">Retrieving official diagnostic result…</p>
         </div>
       </div>
     )
@@ -147,20 +169,20 @@ export default function ResultPage() {
 
   if (errorStatus === 404 || errorStatus === 403) {
     return (
-      <div className="flex-1 flex items-center justify-center p-6 min-h-[60vh] bg-surface-subtle">
-        <div className="text-center space-y-3 max-w-md">
-          <AlertCircle className="h-8 w-8 text-muted-foreground mx-auto" aria-hidden />
-          <h1 className="text-xl font-semibold">Result not available</h1>
+      <div className="flex min-h-0 flex-col items-center justify-center bg-background text-foreground p-6">
+        <div className="max-w-md text-center space-y-4">
+          <AlertCircle className="size-10 text-muted-foreground mx-auto" aria-hidden />
+          <h1 className="text-xl font-semibold text-foreground">Diagnostic Record Not Available</h1>
           <p className="text-sm text-muted-foreground">
             {errorStatus === 404
-              ? "This attempt does not exist."
-              : "You do not have permission to view this attempt."}
+              ? "This examination attempt was not found."
+              : "You do not have authorization to view this diagnostic record."}
           </p>
           <Link
             href="/dashboard"
-            className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-2.5 text-sm font-medium text-black hover:bg-neutral-200"
           >
-            Back to dashboard
+            Return to Dashboard
           </Link>
         </div>
       </div>
@@ -169,12 +191,14 @@ export default function ResultPage() {
 
   if (error || !result) {
     return (
-      <div className="flex-1 flex items-center justify-center p-6 min-h-[60vh] bg-surface-subtle">
-        <div className="text-center space-y-3 max-w-md">
-          <AlertCircle className="h-8 w-8 text-destructive mx-auto" aria-hidden />
-          <h1 className="text-xl font-semibold">Something went wrong</h1>
-          <p className="text-sm text-muted-foreground">{error ?? "An unexpected error occurred."}</p>
-          <Button onClick={() => retryFetch()}>Retry</Button>
+      <div className="flex min-h-0 flex-col items-center justify-center bg-background text-foreground p-6">
+        <div className="max-w-md text-center space-y-4">
+          <AlertCircle className="size-10 text-red-400 mx-auto" aria-hidden />
+          <h1 className="text-xl font-semibold text-foreground">Something Went Wrong</h1>
+          <p className="text-sm text-red-200/80">{error ?? "An unexpected error occurred."}</p>
+          <Button onClick={retryFetch} className="rounded-xl bg-white text-black hover:bg-neutral-200">
+            Retry Connection
+          </Button>
         </div>
       </div>
     )
@@ -182,136 +206,109 @@ export default function ResultPage() {
 
   const score = result.score
   const isWriting = result.testSet.skill === "WRITING"
+  const isSpeaking = result.testSet.skill === "SPEAKING"
   const autoDetail = (score?.inlineFeedbackJson ?? null) as AutoGradeDetail | null
-  // WRITING stores { criterionFeedback, inlineCorrections }; auto-graded skills
-  // store { perQuestion, correctCount, total }. Both flow through the same column.
   const writingFeedback = (score?.inlineFeedbackJson ?? null) as WritingFeedback | null
   const inlineCorrections = writingFeedback?.inlineCorrections ?? []
   const criterionFeedback = writingFeedback?.criterionFeedback ?? {}
 
   return (
-    <div className="flex-1 bg-surface-subtle">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-4">
-        {/* Header */}
+    <div className="relative min-h-0 bg-background text-foreground pb-16">
+      {/* Ambient Lighting Orbs */}
+      <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden>
+        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-cyan-500/10 blur-[130px]" />
+        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-indigo-500/10 blur-[150px]" />
+        <div
+          className="absolute inset-0 opacity-[0.025]"
+          style={{
+            backgroundImage: `linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)`,
+            backgroundSize: "64px 64px",
+          }}
+        />
+      </div>
+
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+        {/* Top Breadcrumb */}
         <div className="flex items-center justify-between gap-3">
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+            className="inline-flex items-center gap-1.5 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
           >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-            Dashboard
+            <ArrowLeft className="size-3.5" />
+            <span>RETURN TO DASHBOARD</span>
           </Link>
-          <span className="text-[11px] text-muted-foreground truncate">{result.testSet.title}</span>
+
+          <span className="text-xs font-mono text-muted-foreground truncate">
+            EXAM ID: {result.id.slice(0, 8).toUpperCase()}
+          </span>
         </div>
 
-        {inProgress && (
-          <div className="rounded-xl border border-border bg-card p-5 flex items-start gap-3" role="status">
-            <Loader2 className="h-5 w-5 animate-spin text-primary mt-0.5" aria-hidden />
-            <div>
-              <h2 className="text-sm font-semibold">Returning to your test…</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                This attempt is still in progress. Opening the exam page — your saved answers are
-                restored there.
-              </p>
-            </div>
-          </div>
-        )}
-
+        {/* Evaluation In-Flight States */}
         {result.status === "SCORING" && (
-          <div className="rounded-xl border border-primary/20 bg-primary/10 p-5 flex items-start gap-3">
-            <Loader2 className="h-5 w-5 animate-spin text-primary mt-0.5" aria-hidden />
-            <div>
-              <h2 className="text-sm font-semibold text-blue-900">Scoring in progress</h2>
-              <p className="text-xs text-primary mt-1">
-                The AI examiner is evaluating your submission. This page will show your band score
-                once scoring completes.
+          <div className="rounded-3xl border border-cyan-400/30 bg-gradient-to-r from-cyan-950/40 to-blue-950/30 p-6 backdrop-blur-xl flex items-start gap-4">
+            <Loader2 className="size-6 animate-spin text-cyan-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-foreground">AI Examiner Evaluation in Progress</h2>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Autonomous LangGraph review agents are evaluating your submission across all four official
+                IELTS criteria. This page updates automatically once your band score is finalized.
               </p>
             </div>
           </div>
         )}
 
         {result.status === "SUBMITTED" && (
-          <div className="rounded-xl border border-warning/30 bg-warning/10 p-5 space-y-3">
-            <div className="flex items-start gap-3">
-              <Clock className="h-5 w-5 text-warning mt-0.5" aria-hidden />
-              <div>
-                <h2 className="text-sm font-semibold text-amber-900">Awaiting scoring</h2>
-                <p className="text-xs text-warning mt-1">
-                  Your submission was received but scoring did not complete. You can retry scoring
-                  below — your answers are safely stored.
+          <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 backdrop-blur-xl space-y-4">
+            <div className="flex items-start gap-3.5">
+              <Clock className="size-6 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h2 className="text-base font-semibold text-foreground">Submission Stored — Ready for Scoring</h2>
+                <p className="text-xs text-amber-200/80">
+                  Your exam answers are safely persisted. Trigger the AI examiner scoring engine below.
                 </p>
               </div>
             </div>
+
             {rescoreError && (
-              <p role="alert" className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
+              <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
                 {rescoreError}
               </p>
             )}
-            <Button size="sm" onClick={() => void rescore()} disabled={rescoring} className="cursor-pointer">
+
+            <Button
+              onClick={() => void rescore()}
+              disabled={rescoring}
+              className="rounded-xl bg-white text-black hover:bg-neutral-200 text-xs font-medium cursor-pointer"
+            >
               {rescoring ? (
                 <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden /> Retrying…
+                  <Loader2 className="size-3.5 mr-2 animate-spin" /> Scoring in progress…
                 </>
               ) : (
                 <>
-                  <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden /> Retry scoring
+                  <RefreshCw className="size-3.5 mr-2" /> Start AI Evaluation
                 </>
               )}
             </Button>
           </div>
         )}
 
-        {result.status === "NEEDS_REVIEW" && (
-          <div className="rounded-xl border border-warning/30 bg-warning/10 p-5">
-            <h2 className="text-sm font-semibold text-amber-900">Pending examiner review</h2>
-            <p className="text-xs text-warning mt-1">
-              {isWriting
-                ? "The AI scorer flagged this submission for human verification. A certified examiner will confirm your band shortly."
-                : "A certified examiner will evaluate your recorded response. Your band will appear here once review is complete."}
-            </p>
-          </div>
-        )}
-
-        {result.status === "COMPLETED" && !score && (
-          <div className="rounded-xl border border-warning/30 bg-warning/10 p-5 space-y-3">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="h-5 w-5 text-warning mt-0.5" aria-hidden />
-              <div>
-                <h2 className="text-sm font-semibold text-amber-900">Score unavailable</h2>
-                <p className="text-xs text-warning mt-1">
-                  This attempt is marked complete but no score was recorded. You can retry scoring
-                  below, or contact support if the problem persists.
-                </p>
-              </div>
-            </div>
-            {rescoreError && (
-              <p role="alert" className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
-                {rescoreError}
-              </p>
-            )}
-            <Button size="sm" onClick={() => void rescore()} disabled={rescoring} className="cursor-pointer">
-              {rescoring ? (
-                <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden /> Retrying…
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden /> Retry scoring
-                </>
-              )}
-            </Button>
-          </div>
-        )}
-
+        {/* Completed Score Report Form */}
         {result.status === "COMPLETED" && score && (
-          <div className="space-y-4">
-            {/* Band summary */}
-            <div className="rounded-xl border border-border bg-card p-5 sm:p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h1 className="text-lg font-semibold">Your result</h1>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {result.testSet.skill} ·{" "}
+          <div className="space-y-6">
+            {/* TRF Official Hero Card */}
+            <div className="relative overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-[#16213A]/80 via-[#10192B]/90 to-[#0B0E14] p-6 sm:p-8 backdrop-blur-2xl shadow-2xl space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-border">
+                <div className="space-y-2">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1 text-[11px] font-mono tracking-widest text-cyan-300 uppercase">
+                    <ShieldCheck className="size-3.5 text-cyan-400" />
+                    <span>Official IELTS Diagnostic TRF</span>
+                  </div>
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+                    {result.testSet.title}
+                  </h1>
+                  <p className="text-xs text-muted-foreground">
+                    Module: <span className="text-foreground font-medium">{result.testSet.skill}</span> · Completed{" "}
                     {result.submittedAt
                       ? new Date(result.submittedAt).toLocaleString(undefined, {
                           dateStyle: "medium",
@@ -320,143 +317,269 @@ export default function ResultPage() {
                       : "—"}
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-4xl font-semibold tracking-tight text-primary tabular-nums">
+
+                {/* Overall Band Score Pill Badge */}
+                <div className="flex flex-col items-start sm:items-end">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">OVERALL</span>
+                    <span className="text-5xl font-extrabold tracking-tight font-mono text-foreground tabular-nums">
                       {score.bandScore.toFixed(1)}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground uppercase tracking-wider">
-                      Band score
-                    </div>
+                    </span>
                   </div>
+                  <span className="text-xs font-mono text-cyan-300 mt-1">
+                    {getCefrLevel(score.bandScore)}
+                  </span>
                 </div>
               </div>
 
-              {autoDetail?.correctCount != null && autoDetail.total != null && (
-                <p className="mt-4 text-sm text-muted-foreground">
-                  {autoDetail.correctCount} of {autoDetail.total} questions correct · graded automatically
-                </p>
-              )}
+              {/* Verified Badges and Meta */}
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2">
+                  {score.scoredBy === "ADMIN_OVERRIDE" && (
+                    <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-0.5 text-[11px] font-mono text-emerald-300">
+                      VERIFIED BY SENIOR INSTRUCTOR
+                    </span>
+                  )}
+                  {score.scoredBy === "AI_REVIEW_GLM" && (
+                    <span className="rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-0.5 text-[11px] font-mono text-cyan-300">
+                      DUAL-PASS LANGGRAPH AGENT REVIEW
+                    </span>
+                  )}
+                  {autoDetail?.correctCount != null && autoDetail.total != null && (
+                    <span className="rounded-full border border-border bg-surface-subtle px-3 py-0.5 text-[11px] font-mono text-muted-foreground">
+                      {autoDetail.correctCount} OF {autoDetail.total} ITEMS CORRECT ({Math.round((autoDetail.correctCount / autoDetail.total) * 100)}%)
+                    </span>
+                  )}
+                </div>
 
-              {score.scoredBy === "INSTRUCTOR" && (
-                <p className="mt-4 inline-flex items-center gap-1.5 rounded-none border border-success/30 bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success">
-                  Verified by examiner
-                </p>
-              )}
+                <Link
+                  href={`/skills/${result.testSet.skill.toLowerCase()}`}
+                  className="inline-flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                >
+                  <span>Practice this skill again</span>
+                  <ArrowRight className="size-3.5" />
+                </Link>
+              </div>
             </div>
 
-            {/* Writing criteria breakdown */}
+            {/* Criteria Breakdown Grid */}
+            {/* Writing Criteria */}
             {isWriting && score.taskAchievement != null && (
-              <div className="rounded-xl border border-border bg-card p-5 sm:p-6 space-y-4">
-                <h2 className="text-sm font-semibold">Criteria breakdown</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-xl space-y-6">
+                <div className="flex items-center justify-between border-b border-border pb-4">
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">Official IELTS Assessment Criteria</h2>
+                    <p className="text-xs text-muted-foreground">Multi-criteria analysis graded on 0.0 – 9.0 band scale</p>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground">4 CRITERIA EVALUATED</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
                     { label: "Task Achievement / Response", value: score.taskAchievement, key: "taskAchievement" },
                     { label: "Coherence & Cohesion", value: score.coherenceCohesion, key: "coherenceCohesion" },
                     { label: "Lexical Resource", value: score.lexicalResource, key: "lexicalResource" },
                     { label: "Grammatical Range & Accuracy", value: score.grammaticalAccuracy, key: "grammaticalAccuracy" },
-                  ].map(
-                    (c) =>
-                      c.value != null && (
-                        <div key={c.key} className="rounded-lg bg-surface-subtle border border-border p-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-muted-foreground">{c.label}</span>
-                            <span className="text-sm font-semibold tabular-nums">{c.value.toFixed(1)}</span>
-                          </div>
-                          <div className="mt-2 h-1.5 rounded-none bg-border overflow-hidden" aria-hidden>
-                            <div
-                              className="h-full rounded-none bg-primary"
-                              style={{ width: `${(c.value / 9) * 100}%` }}
-                            />
-                          </div>
-                          {criterionFeedback[c.key as keyof typeof criterionFeedback] && (
-                            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                              {criterionFeedback[c.key as keyof typeof criterionFeedback]}
+                  ].map((c) => (
+                    <div
+                      key={c.key}
+                      className="rounded-2xl border border-border bg-surface-subtle p-5 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">{c.label}</span>
+                        <span className="font-mono text-base font-bold text-foreground tabular-nums">
+                          Band {c.value?.toFixed(1) ?? "—"}
+                        </span>
+                      </div>
+
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-card">
+                        <div
+                          className="h-full bg-gradient-to-r from-cyan-400 to-indigo-400 transition-all duration-500"
+                          style={{ width: `${((c.value ?? 0) / 9) * 100}%` }}
+                        />
+                      </div>
+
+                      {criterionFeedback[c.key as keyof typeof criterionFeedback] && (
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {criterionFeedback[c.key as keyof typeof criterionFeedback]}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Speaking Criteria */}
+            {isSpeaking && score.fluencyCoherence != null && (
+              <div className="rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-xl space-y-6">
+                <div className="flex items-center justify-between border-b border-border pb-4">
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">Speaking Assessment Criteria</h2>
+                    <p className="text-xs text-muted-foreground">Phonetic, fluency, and structural proficiency</p>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground">4 CRITERIA EVALUATED</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { label: "Fluency & Coherence", value: score.fluencyCoherence, feedback: writingFeedback?.criterionFeedback?.fluencyCoherence },
+                    { label: "Lexical Resource", value: score.lexicalResource, feedback: writingFeedback?.criterionFeedback?.lexicalResource },
+                    { label: "Grammatical Range & Accuracy", value: score.grammaticalAccuracy, feedback: writingFeedback?.criterionFeedback?.grammaticalAccuracy },
+                    { label: "Pronunciation & Intonation", value: score.pronunciation, feedback: writingFeedback?.criterionFeedback?.pronunciation },
+                  ].map((c) => (
+                    <div
+                      key={c.label}
+                      className="rounded-2xl border border-border bg-surface-subtle p-5 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">{c.label}</span>
+                        <span className="font-mono text-base font-bold text-foreground tabular-nums">
+                          Band {c.value?.toFixed(1) ?? "—"}
+                        </span>
+                      </div>
+
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-card">
+                        <div
+                          className="h-full bg-gradient-to-r from-cyan-400 to-indigo-400 transition-all duration-500"
+                          style={{ width: `${((c.value ?? 0) / 9) * 100}%` }}
+                        />
+                      </div>
+
+                      {c.feedback && (
+                        <p className="text-xs leading-relaxed text-muted-foreground">{c.feedback}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Detailed Examiner Commentary */}
+            {score.feedbackSummary && (
+              <div className="rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-xl space-y-3">
+                <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-cyan-300">
+                  <Bot className="size-4" />
+                  <span>AI Senior Examiner Commentary</span>
+                </div>
+                <p className="text-sm leading-relaxed text-foreground/85 whitespace-pre-line">
+                  {score.feedbackSummary}
+                </p>
+              </div>
+            )}
+
+            {/* Sentence-by-sentence upgrades (Inline Corrections) */}
+            {isWriting && inlineCorrections.length > 0 && (
+              <div className="rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-xl space-y-4">
+                <div className="flex items-center justify-between border-b border-border pb-4">
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">Detailed Grammar & Lexical Upgrades</h2>
+                    <p className="text-xs text-muted-foreground">What you wrote vs IELTS Band 8.5+ native revision</p>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground">{inlineCorrections.length} CORRECTIONS</span>
+                </div>
+
+                <div className="space-y-3">
+                  {inlineCorrections.map((c, i) => (
+                    <div
+                      key={i}
+                      className="rounded-2xl border border-border bg-surface-subtle p-4 space-y-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-300 line-through">
+                          {c.originalText}
+                        </span>
+                        <span className="text-muted-foreground">→</span>
+                        <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-emerald-300 font-medium">
+                          {c.correctedText}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{c.explanation}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Auto-graded Question Breakdown (Listening / Reading) */}
+            {autoDetail?.perQuestion && autoDetail.perQuestion.length > 0 && (
+              <div className="rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-xl space-y-4">
+                <div className="flex items-center justify-between border-b border-border pb-4">
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">Item-by-Item Review</h2>
+                    <p className="text-xs text-muted-foreground">Comprehensive response verification</p>
+                  </div>
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {autoDetail.perQuestion.length} QUESTIONS REVIEWED
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {autoDetail.perQuestion.map((q, idx) => {
+                    const prompt = result.questions.find((pq) => pq.id === q.questionId)?.prompt
+                    return (
+                      <div
+                        key={q.questionId}
+                        className={`rounded-2xl border p-4 space-y-2 ${
+                          q.correct
+                            ? "border-emerald-500/20 bg-emerald-500/5"
+                            : "border-rose-500/20 bg-rose-500/5"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-xs sm:text-sm font-medium text-foreground">
+                            <span className="font-mono text-cyan-400 mr-2">{idx + 1}.</span>
+                            {prompt || `Question ${idx + 1}`}
+                          </p>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-mono uppercase tracking-wide border shrink-0 ${
+                              q.correct
+                                ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                                : "border-rose-400/40 bg-rose-400/10 text-rose-300"
+                            }`}
+                          >
+                            {q.correct ? "Correct" : "Incorrect"}
+                          </span>
+                        </div>
+
+                        <div className="text-xs space-y-1 text-muted-foreground">
+                          <p>
+                            Your Answer: <span className="font-mono text-foreground">{q.given || "(None)"}</span>
+                          </p>
+                          {!q.correct && q.expected && (
+                            <p className="text-emerald-300">
+                              Correct Key: <span className="font-mono font-medium">{q.expected}</span>
                             </p>
                           )}
                         </div>
-                      ),
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Candidate Submission / ASR Transcript */}
+            {result.answerText && (
+              <details className="rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl">
+                <summary className="text-sm font-semibold text-muted-foreground cursor-pointer flex items-center gap-2">
+                  <FileText className="size-4 text-cyan-400" />
+                  <span>View Original Submission / Transcript</span>
+                </summary>
+                <div className="pt-4 border-t border-border mt-3">
+                  {isSpeaking && writingFeedback?.transcript ? (
+                    <div className="space-y-2">
+                      <p className="text-xs font-mono text-cyan-300">GLM-ASR RECOGNIZED TRANSCRIPT:</p>
+                      <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-line bg-black/20 p-4 rounded-xl border border-border">
+                        {writingFeedback.transcript}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-line bg-black/20 p-4 rounded-xl border border-border">
+                      {result.answerText.startsWith("data:") ? "Audio recording captured." : result.answerText}
+                    </p>
                   )}
                 </div>
-                {score.feedbackSummary && (
-                  <div className="pt-1">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                      Examiner summary
-                    </h3>
-                    <p className="text-sm leading-relaxed text-foreground/90">{score.feedbackSummary}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* AI inline corrections (spelling + grammar fixes quoted from the essay) */}
-            {isWriting && inlineCorrections.length > 0 && (
-              <div className="rounded-xl border border-border bg-card p-5 sm:p-6 space-y-3">
-                <h2 className="text-sm font-semibold">Detailed corrections</h2>
-                <ul className="space-y-2">
-                  {inlineCorrections.map((c, i) => (
-                    <li
-                      key={`${c.originalText}-${i}`}
-                      className="rounded-lg bg-surface-subtle border border-border px-3 py-2.5 space-y-1"
-                    >
-                      <p className="text-xs">
-                        <span className="text-destructive line-through decoration-destructive/60">
-                          {c.originalText}
-                        </span>
-                        <span className="mx-1.5 text-muted-foreground" aria-hidden>
-                          →
-                        </span>
-                        <span className="text-success font-medium">{c.correctedText}</span>
-                      </p>
-                      <p className="text-[11px] leading-relaxed text-muted-foreground">{c.explanation}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Auto-graded per-question review */}
-            {autoDetail?.perQuestion && autoDetail.perQuestion.length > 0 && (
-              <div className="rounded-xl border border-border bg-card p-5 sm:p-6 space-y-3">
-                <h2 className="text-sm font-semibold">Question review</h2>
-                <ul className="space-y-2">
-                  {autoDetail.perQuestion.map((q, i) => (
-                    <li
-                      key={q.questionId}
-                      className="flex items-start justify-between gap-3 rounded-lg bg-surface-subtle border border-border px-3 py-2.5"
-                    >
-                      <div className="min-w-0">
-                        <span className="text-xs font-medium">Question {i + 1}</span>
-                        <p className="text-xs text-muted-foreground truncate">
-                          Your answer: {q.given || "—"}
-                          {!q.correct && q.expected ? ` · Correct: ${q.expected}` : ""}
-                        </p>
-                      </div>
-                      <span
-                        className={`shrink-0 rounded-none px-2 py-0.5 text-[10px] font-medium border ${
-                          q.correct
-                            ? "border-success/30 bg-success/10 text-success"
-                            : "border-destructive/30 bg-destructive/10 text-destructive"
-                        }`}
-                      >
-                        {q.correct ? "Correct" : "Incorrect"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Essay text */}
-            {result.answerText && (
-              <details className="rounded-xl border border-border bg-card p-5">
-                <summary className="text-sm font-medium cursor-pointer flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-muted-foreground" aria-hidden />
-                  View your submission
-                </summary>
-                <p className="mt-3 text-sm leading-relaxed text-foreground/90 whitespace-pre-line">
-                  {result.answerText.startsWith("data:") ? "Recorded audio response." : result.answerText}
-                </p>
               </details>
             )}
           </div>
@@ -465,4 +588,3 @@ export default function ResultPage() {
     </div>
   )
 }
-

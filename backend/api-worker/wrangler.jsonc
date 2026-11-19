@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "speakio-api",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "containers": [
+    {
+      "class_name": "SpeakioApiContainer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": {
+          "dockerfile": "../Dockerfile"
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SPEAKIO_API", "class_name": "SpeakioApiContainer" }
+    ]
+  },
+  "exports": {
+    "SpeakioApiContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "vars": {
+    "FRONTEND_URL": "https://speakio-web.speakio.workers.dev",
+    "COOKIE_SAMESITE": "none"
+  }
+}
