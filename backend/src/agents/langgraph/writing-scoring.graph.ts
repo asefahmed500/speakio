@@ -178,7 +178,7 @@ function buildModel() {
   return new ChatOpenAI({
     apiKey,
     temperature: 0.1,
-    modelName: process.env.ZAI_MODEL_REASONING ?? 'glm-4.7-flash',
+    modelName: process.env.ZAI_MODEL_REASONING ?? '@cf/zai-org/glm-4.7-flash',
     configuration: {
       // Same default as ZaiProvider — one env contract for the same provider.
       baseURL: process.env.ZAI_BASE_URL || 'https://api.z.ai/api/paas/v4',

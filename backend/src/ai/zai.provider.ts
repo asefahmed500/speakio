@@ -137,6 +137,11 @@ export class ZaiProvider {
    */
   async transcribe(audioBase64: string): Promise<string> {
     this.assertAvailable();
+    // Cloudflare Workers AI has no /audio/transcriptions endpoint — use the
+    // free Whisper REST model instead (same provider, same API key).
+    if (process.env.ZAI_BASE_URL?.includes('api.cloudflare.com')) {
+      return this.transcribeWithWorkersAi(audioBase64);
+    }
     try {
       const buffer = Buffer.from(audioBase64, 'base64');
       // Node 20+ exposes File globally; the SDK uploads it as multipart form.
@@ -155,6 +160,42 @@ export class ZaiProvider {
       const message = error instanceof Error ? error.message : String(error);
       const stack = error instanceof Error ? error.stack : undefined;
       this.logger.error(`Z.AI transcription failed: ${message}`, stack);
+      throw error;
+    }
+  }
+
+  private async transcribeWithWorkersAi(audioBase64: string): Promise<string> {
+    try {
+      const base = process.env.ZAI_BASE_URL!.replace(/\/v1\/?$/, '');
+      const model = process.env.ZAI_MODEL_ASR || '@cf/openai/whisper-large-v3-turbo';
+      const response = await fetch(
+        `${base}/run/${model}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.ZAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ audio: audioBase64, task: 'transcribe' }),
+          signal: AbortSignal.timeout(120_000),
+        },
+      );
+      const json = (await response.json()) as {
+        result?: { text?: string };
+        errors?: Array<{ message?: string }>;
+      };
+      if (!response.ok) {
+        throw new Error(
+          `Workers AI transcription failed: ${json.errors?.[0]?.message ?? response.status}`,
+        );
+      }
+      this.recordSuccess();
+      return (json.result?.text ?? '').trim();
+    } catch (error) {
+      this.recordFailure();
+      this.logger.error(
+        `Workers AI transcription failed: ${error instanceof Error ? error.message : error}`,
+      );
       throw error;
     }
   }

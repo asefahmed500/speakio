@@ -70,7 +70,7 @@ export class AiService {
           model,
           messages,
           temperature: options?.temperature ?? 0.2,
-          maxTokens: options?.maxTokens ?? 2048,
+          maxTokens: options?.maxTokens ?? 8192,
           responseFormat: options?.responseFormat,
           timeoutMs: options?.timeoutMs,
         });
@@ -104,7 +104,7 @@ export class AiService {
             model: chain[0],
             messages,
             temperature: options?.temperature ?? 0.2,
-            maxTokens: options?.maxTokens ?? 2048,
+            maxTokens: options?.maxTokens ?? 8192,
             responseFormat: options?.responseFormat,
             timeoutMs: options?.timeoutMs,
           }),

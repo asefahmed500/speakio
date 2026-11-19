@@ -9,7 +9,7 @@ Browser
   → Cloudflare Tunnel (trycloudflare.com)
   → localhost:4040  NestJS API
   → PostgreSQL 18 (local dev database)
-  → Z.AI glm-4.7-flash (free tier) for AI agents
+  → Cloudflare Workers AI (free models: @cf/zai-org/glm-4.7-flash + Whisper ASR)
 ```
 
 The frontend Worker auto-scales on Cloudflare's edge. The API Worker gives a
@@ -51,7 +51,17 @@ Secrets live in `.env` / `.env.local` (git-ignored). Worker variables:
 
 - `speakio-web`: `NEXT_PUBLIC_API_URL` baked at build time (currently the API Worker).
 - `speakio-api`: `API_ORIGIN` = current tunnel URL.
-- Backend: `DATABASE_URL`, `JWT_SECRET`, `ZAI_API_KEY`, `FRONTEND_URL`, `COOKIE_SAMESITE=none` for cross-site auth cookies, optional `CF_EMAIL_API_TOKEN`/`CF_ACCOUNT_ID`/`CF_EMAIL_FROM` for password-reset email.
+- Backend: `DATABASE_URL`, `JWT_SECRET`, `CF_AI_TOKEN` (Cloudflare API token used as `ZAI_API_KEY`), `FRONTEND_URL`, `COOKIE_SAMESITE=none` for cross-site auth cookies, optional `CF_EMAIL_API_TOKEN`/`CF_ACCOUNT_ID`/`CF_EMAIL_FROM` for password-reset email.
+- AI provider: `ZAI_BASE_URL=https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1`, `ZAI_API_KEY=<CF token>`, all three `ZAI_MODEL_*` = `@cf/zai-org/glm-4.7-flash`, `ZAI_MODEL_ASR=@cf/openai/whisper-large-v3-turbo`. The `ZAI_*` names are kept as the provider contract; the transport is Cloudflare's OpenAI-compatible Workers AI endpoint. Reasoning models need ~8k `max_tokens` for structured JSON.
+
+### Cloudflare database status (honest)
+
+A D1 database `speakio-db` was provisioned on the account, but it is SQLite and
+the application is PostgreSQL + Prisma (Postgres enums, partial indexes, raw
+SQL migrations). It is **not wired into the app** — wiring it would be a real
+port, not a config change. The live application database remains PostgreSQL.
+A fully cloud-native backend additionally requires the Workers Paid plan
+(Containers) plus a managed Postgres such as Neon (Hyperdrive or direct URL).
 
 ## Cloudflare Containers (requires Workers Paid plan)
 
