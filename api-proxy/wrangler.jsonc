@@ -3,6 +3,6 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-11-18",
   "vars": {
-    "API_ORIGIN": "https://virginia-fares-interact-citation.trycloudflare.com"
+    "API_ORIGIN": "https://qualify-synopsis-pieces-wireless.trycloudflare.com"
   }
 }

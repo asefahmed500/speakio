@@ -1,0 +1,71 @@
+name: Check & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: speakio-deploy
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Frontend dependencies
+        run: npm ci
+      - name: Frontend typecheck
+        run: npm run typecheck
+      - name: Frontend lint
+        run: npm run lint
+      - name: Frontend unit tests
+        run: npm test
+      - name: Backend dependencies
+        run: npm --prefix backend ci
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+      - name: Backend unit tests
+        run: npm --prefix backend test
+      - name: Production build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://speakio-api.speakio.workers.dev
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # The API Worker (reverse proxy) is deployed first so the frontend's
+      # baked NEXT_PUBLIC_API_URL always points at a live endpoint.
+      - name: Deploy API Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config api-proxy/wrangler.jsonc
+      - name: Build frontend Worker
+        run: npm run cf:build
+        env:
+          NEXT_PUBLIC_API_URL: https://speakio-api.speakio.workers.dev
+      - name: Deploy frontend Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+      - name: Post-deploy health check
+        run: |
+          curl --fail --retry 5 --retry-delay 5 https://speakio-api.speakio.workers.dev/health
+          curl --fail --retry 5 --retry-delay 5 https://speakio-web.speakio.workers.dev/login

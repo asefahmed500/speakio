@@ -23,7 +23,6 @@ function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [serverError, setServerError] = useState<string | null>(null)
-  const setEmailDraft = useAuthUiStore((s) => s.setEmailDraft)
   const clearEmailDraft = useAuthUiStore((s) => s.clearEmailDraft)
 
   const {
@@ -45,13 +44,6 @@ function LoginForm() {
   const nextPath = searchParams.get("next")
   const dashboardFor = (role: LoginResponse["role"]) =>
     role === "ADMIN" ? "/overview" : "/dashboard"
-
-  const fillDemo = (email: string, password: string) => {
-    setValue("email", email, { shouldValidate: true })
-    setValue("password", password, { shouldValidate: true })
-    setEmailDraft(email)
-    setServerError(null)
-  }
 
   const onSubmit = async (data: LoginFormData) => {
     setServerError(null)
@@ -129,15 +121,9 @@ function LoginForm() {
           No sign-in required to <Link href="/verify" className="underline underline-offset-4">verify a certificate</Link>.
         </p>
 
-      <div className="flex gap-2 text-[11px] text-neutral-400">
-        <button type="button" onClick={() => fillDemo("user@speakio.com", "password123")} className="underline underline-offset-4 hover:text-[#111111]">
-          Demo user
-        </button>
-        <span aria-hidden>·</span>
-        <button type="button" onClick={() => fillDemo("admin@speakio.com", "password123")} className="underline underline-offset-4 hover:text-[#111111]">
-          Demo admin
-        </button>
-      </div>
+        <p className="border-t border-black/5 pt-4 text-center text-[11px] text-neutral-400">
+          No sign-in required to <Link href="/verify" className="underline underline-offset-4">verify a certificate</Link>.
+        </p>
     </div>
   )
 }

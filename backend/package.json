@@ -87,6 +87,7 @@
     "testEnvironment": "node"
   },
   "prisma": {
-    "seed": "ts-node prisma/seed.ts && ts-node prisma/seed-free-bank.ts"
+    "seed": "ts-node prisma/seed.ts && ts-node prisma/seed-free-bank.ts",
+    "create-admin": "ts-node prisma/create-admin.ts"
   }
 }

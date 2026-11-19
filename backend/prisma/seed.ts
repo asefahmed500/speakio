@@ -1,5 +1,4 @@
-import { PrismaClient, Prisma, Role, SkillType, ModuleType, AttemptStatus } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import { PrismaClient, Prisma, SkillType, ModuleType } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -15,89 +14,11 @@ interface CompletionMetadata {
 }
 
 async function main() {
-  console.log('Seeding Speakio Database...');
+  console.log('Seeding Speakio IELTS test content...');
 
-  // Seed credentials come from env with a dev-only fallback. Privileged
-  // seed accounts are refused outside development so a pipeline can never
-  // silently create a known superadmin password in a shared database.
-  const isProduction = process.env.NODE_ENV === 'production';
-  const seedPassword = process.env.SEED_PASSWORD;
-  if (!seedPassword) {
-    if (isProduction) {
-      throw new Error(
-        'Refusing to seed in production without SEED_PASSWORD. Set SEED_PASSWORD to a strong value.',
-      );
-    }
-    console.warn('SEED_PASSWORD not set — using the default development password.');
-  }
-  const passwordHash = await bcrypt.hash(seedPassword ?? 'password123', 10);
-
-  // 1. Users (one per role in the two-role SaaS model)
-  const student = await prisma.user.upsert({
-    where: { email: 'user@speakio.com' },
-    update: { passwordHash, role: Role.USER },
-    create: {
-      email: 'user@speakio.com',
-      passwordHash,
-      name: 'Asef Ahmed',
-      role: Role.USER,
-      targetBand: 8.0,
-      subscriptionTier: 'pro',
-      dailyCommitmentMinutes: 45,
-      weakestSkill: 'WRITING',
-      examDate: new Date('2026-10-15'),
-    },
-  });
-
-  // Keep the legacy demo address working as a plain USER account.
-  await prisma.user.upsert({
-    where: { email: 'student@speakio.com' },
-    update: { passwordHash, role: Role.USER },
-    create: {
-      email: 'student@speakio.com',
-      passwordHash,
-      name: 'Asef Ahmed',
-      role: Role.USER,
-      targetBand: 8.0,
-      subscriptionTier: 'pro',
-      dailyCommitmentMinutes: 45,
-      weakestSkill: 'WRITING',
-      examDate: new Date('2026-10-15'),
-    },
-  });
-
-  if (!isProduction) {
-    await prisma.user.upsert({
-      where: { email: 'admin@speakio.com' },
-      update: { passwordHash, role: Role.ADMIN },
-      create: {
-        email: 'admin@speakio.com',
-        passwordHash,
-        name: 'Operations Admin',
-        role: Role.ADMIN,
-        targetBand: 9.0,
-        subscriptionTier: 'institution',
-      },
-    });
-
-    // Former examiner/superadmin accounts collapse into the two-role model:
-    // the examiner persona is now an AI agent, so demote stale rows.
-    await prisma.user.updateMany({
-      where: { email: { in: ['examiner@speakio.com', 'superadmin@speakio.com'] } },
-      data: { role: Role.USER },
-    });
-    await prisma.user.updateMany({
-      where: { role: { notIn: [Role.USER, Role.ADMIN] } },
-      data: { role: Role.USER },
-    });
-
-    const passwordHint = seedPassword ? 'the SEED_PASSWORD value' : 'password123 (dev default)';
-    console.log(
-      `Seeded users: user@speakio.com (USER), admin@speakio.com (ADMIN) — ${passwordHint}`,
-    );
-  } else {
-    console.log('Seeded user@speakio.com only — the admin seed account is disabled in production.');
-  }
+  // No accounts, attempts or certificates are seeded — real users register
+  // themselves. Bootstrap the first admin with prisma/create-admin.ts instead.
+  // Test content below is idempotent and safe to run on an existing database.
 
   // 2. WRITING test set
   const writingSet = await prisma.testSet.upsert({
@@ -449,73 +370,7 @@ async function main() {
     },
   });
 
-  // 6. Demo attempt (writing, AI-reviewed and completed) + score + audit item
-  const attempt = await prisma.attempt.upsert({
-    where: { id: 'att-student-demo-1' },
-    update: { status: AttemptStatus.COMPLETED },
-    create: {
-      id: 'att-student-demo-1',
-      userId: student.id,
-      testSetId: writingSet.id,
-      status: AttemptStatus.COMPLETED,
-      answersJson: {
-        'c18-w-task2':
-          'In contemporary education systems, there is an ongoing debate regarding whether unpaid voluntary work should be mandated for secondary school students. While some educators argue that compulsory volunteering fosters civic responsibility, others contend that mandatory participation undermines the true spirit of altruism. In this essay, I will explore both perspectives and argue that structured community service yields substantial developmental dividends when properly integrated into the curriculum.',
-      },
-      timeRemainingSeconds: 240,
-      submittedAt: new Date(),
-    },
-  });
-
-  await prisma.score.upsert({
-    where: { id: 'sc-student-demo-1' },
-    update: {},
-    create: {
-      id: 'sc-student-demo-1',
-      attemptId: attempt.id,
-      skill: SkillType.WRITING,
-      bandScore: 6.5,
-      taskAchievement: 7.0,
-      coherenceCohesion: 6.0,
-      lexicalResource: 7.0,
-      grammaticalAccuracy: 6.0,
-      confidence: 0.78,
-      feedbackSummary:
-        'Strong contextual framing with cohesive paragraphing, but transitions in body paragraph 2 border on formulaic. Two-pass AI review confirmed the borderline score.',
-      scoredBy: 'AI_GLM',
-    },
-  });
-
-  await prisma.reviewQueueItem.upsert({
-    where: { id: 'rq-demo-101' },
-    update: { status: 'AI_APPROVED', finalBand: 6.5 },
-    create: {
-      id: 'rq-demo-101',
-      attemptId: attempt.id,
-      skill: SkillType.WRITING,
-      status: 'AI_APPROVED',
-      proposedBand: 6.5,
-      finalBand: 6.5,
-      instructorNotes:
-        'Two-pass AI review: borderline lexical range vs cohesion; second pass confirmed 6.5 with 0.91 confidence.',
-    },
-  });
-
-  // 7. Demo verifiable certificate
-  await prisma.certificate.upsert({
-    where: { id: 'SPK-2026-8891-B80' },
-    update: {},
-    create: {
-      id: 'SPK-2026-8891-B80',
-      userId: student.id,
-      certificateNumber: 'SPK-2026-8891-B80',
-      overallBand: 8.0,
-      verificationCode: 'SPK-VERIFY-8891',
-      status: 'ACTIVE',
-    },
-  });
-
-  console.log('Seeded test sets (Writing, Listening, Reading, Speaking), demo attempt, score, review item and certificate.');
+  console.log('Seeded IELTS test content only — no demo accounts, attempts or certificates.');
 }
 
 main()
