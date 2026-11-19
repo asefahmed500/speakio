@@ -12,6 +12,7 @@ import {
   Bot,
   User,
   VolumeX,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { examVoiceAgent } from "@/lib/exam-voice-agent"
@@ -56,6 +57,7 @@ export function AiSpeakingExaminer({
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null)
   const prepTimerRef = useRef<NodeJS.Timeout | null>(null)
   const audioUrlRef = useRef<string | null>(null)
+  const stoppingRef = useRef(false)
 
   const currentQuestion = questions[activeQuestionIndex] || questions[0]
   const isCueCard = currentQuestion?.questionType === "SPEAKING_PROMPT" || currentQuestion?.prompt.includes("You should say:")
@@ -155,9 +157,11 @@ export function AiSpeakingExaminer({
 
   // Stop recording & package WAV segments
   const handleStopRecording = async () => {
-    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+    if (stoppingRef.current) return
     const recorder = wavRecorderRef.current
     if (!recorder) return
+    stoppingRef.current = true
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
 
     setRecordingState("processing")
     try {
@@ -178,6 +182,7 @@ export function AiSpeakingExaminer({
       setAudioError("The audio recording could not be processed. Please try again.")
     } finally {
       wavRecorderRef.current = null
+      stoppingRef.current = false
     }
   }
 
@@ -193,7 +198,7 @@ export function AiSpeakingExaminer({
       <div className="relative overflow-hidden rounded-3xl border border-white/15 bg-gradient-to-br from-[#16213A]/90 via-[#10192B]/95 to-[#0B0E14] p-6 sm:p-8 backdrop-blur-2xl shadow-2xl">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
           <div className="flex items-center gap-3.5">
-            <div className="relative flex size-12 items-center justify-center rounded-2xl border border-cyan-400/40 bg-cyan-950/40 text-cyan-300">
+            <div className="relative flex size-12 items-center justify-center rounded-2xl border border-cyan-400/40 bg-cyan-950/40 text-cyan-100">
               <Bot className="size-6" />
               {examinerSpeaking && (
                 <span className="absolute -bottom-1 -right-1 size-3.5 rounded-full border-2 border-[#10192B] bg-emerald-400 animate-pulse" />
@@ -202,11 +207,11 @@ export function AiSpeakingExaminer({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-semibold text-white">Dr. Arthur Pendelton</h3>
-                <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-mono text-cyan-300">
+                <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-mono text-cyan-100">
                   IELTS EXAMINER
                 </span>
               </div>
-              <p className="text-xs text-white/50">Official Speaking Simulation · Part {currentQuestion?.partNumber || 2}</p>
+              <p className="text-xs text-white/70">Official Speaking Simulation · Part {currentQuestion?.partNumber || 2}</p>
             </div>
           </div>
 
@@ -240,7 +245,7 @@ export function AiSpeakingExaminer({
         {/* Examiner Waveform / Status */}
         <div className="py-5 space-y-3">
           {examinerSpeaking && (
-            <div className="flex items-center gap-2 text-xs font-mono text-cyan-300">
+            <div className="flex items-center gap-2 text-xs font-mono text-cyan-100">
               <span className="flex gap-0.5 items-end h-3.5">
                 <span className="w-1 bg-cyan-400 animate-[pulse_0.4s_ease-in-out_infinite] h-3" />
                 <span className="w-1 bg-cyan-400 animate-[pulse_0.6s_ease-in-out_infinite] h-4" />
@@ -282,7 +287,7 @@ export function AiSpeakingExaminer({
                 <span className="font-mono text-xl font-bold text-amber-300">
                   {formatSec(prepTimeLeft)}
                 </span>
-                <span className="text-xs text-white/60">
+                <span className="text-xs text-white/75">
                   {prepActive ? "Use this minute to take brief notes." : "Prep time ended. Begin speaking."}
                 </span>
               </div>
@@ -290,7 +295,7 @@ export function AiSpeakingExaminer({
 
             {/* Candidate Scratchpad */}
             <div className="space-y-1.5 pt-1">
-              <label htmlFor="speaking-scratchpad" className="text-[11px] font-mono text-white/50 uppercase">
+              <label htmlFor="speaking-scratchpad" className="text-[11px] font-mono text-white/70 uppercase">
                 Candidate Scratchpad (Not graded — for your own structure)
               </label>
               <textarea
@@ -298,7 +303,7 @@ export function AiSpeakingExaminer({
                 value={candidateNotes}
                 onChange={(e) => setCandidateNotes(e.target.value)}
                 placeholder="Bullet point keywords, idioms, or key details for your cue card response…"
-                className="w-full rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-white placeholder:text-white/30 focus:border-white/30 focus:outline-none"
+                className="w-full rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-white placeholder:text-white/50 focus:border-white/30 focus:outline-none"
                 rows={3}
               />
             </div>
@@ -315,11 +320,11 @@ export function AiSpeakingExaminer({
             </div>
             <div>
               <h4 className="text-sm font-semibold text-white">Candidate Response Station</h4>
-              <p className="text-xs text-white/50">Capture response via high-fidelity microphone</p>
+              <p className="text-xs text-white/70">Capture response via high-fidelity microphone</p>
             </div>
           </div>
 
-          <div className="font-mono text-xs text-white/60">
+          <div className="font-mono text-xs text-white/75">
             RECORDING: <span className="text-white font-medium">{formatSec(recordingSeconds)} / 02:00</span>
           </div>
         </div>
@@ -328,9 +333,9 @@ export function AiSpeakingExaminer({
         <div className="flex flex-col items-center justify-center py-6 space-y-4">
           {recordingState === "idle" && (
             <Button
-              onClick={handleStartRecording}
-              disabled={disabled}
-              className="cursor-pointer rounded-2xl bg-white px-8 py-6 text-base font-medium text-black hover:bg-neutral-200 shadow-xl active:scale-95 transition-all"
+              onClick={() => void handleStartRecording()}
+              disabled={disabled || recordingState !== "idle"}
+              className="cursor-pointer rounded-2xl bg-white px-8 py-6 text-base font-medium text-black hover:bg-neutral-200 disabled:opacity-60 shadow-xl active:scale-95 transition-all"
             >
               <Mic className="size-5 mr-2 text-rose-600" />
               <span>Start Speaking & Record</span>
@@ -338,15 +343,22 @@ export function AiSpeakingExaminer({
           )}
 
           {recordingState === "requesting" && (
-            <div className="flex items-center gap-3 text-sm text-cyan-300 font-mono">
-              <span className="size-3 rounded-full bg-cyan-400 animate-ping" />
+            <div role="status" className="flex items-center gap-3 text-sm text-cyan-100 font-mono">
+              <Loader2 className="size-4 animate-spin" />
               <span>INITIALIZING MICROPHONE…</span>
+            </div>
+          )}
+
+          {recordingState === "processing" && (
+            <div role="status" className="flex items-center gap-3 text-sm text-cyan-100 font-mono">
+              <Loader2 className="size-4 animate-spin" />
+              <span>PROCESSING YOUR RESPONSE… PLEASE WAIT</span>
             </div>
           )}
 
           {recordingState === "recording" && (
             <div className="w-full max-w-md space-y-4 text-center">
-              <div className="flex items-center justify-center gap-2 text-sm font-mono text-rose-400">
+              <div className="flex items-center justify-center gap-2 text-sm font-mono text-rose-200">
                 <span className="size-3 rounded-full bg-rose-500 animate-pulse" />
                 <span>LIVE RECORDING IN PROGRESS ({formatSec(recordingSeconds)})</span>
               </div>
@@ -367,8 +379,9 @@ export function AiSpeakingExaminer({
 
               <Button
                 variant="destructive"
-                onClick={handleStopRecording}
-                className="cursor-pointer rounded-xl px-6 py-2.5 text-sm font-medium shadow-lg"
+                onClick={() => void handleStopRecording()}
+                disabled={recordingState !== "recording"}
+                className="cursor-pointer rounded-xl px-6 py-2.5 text-sm font-medium shadow-lg disabled:opacity-60"
               >
                 <Square className="size-4 mr-2" />
                 <span>Stop Recording & Finish Response</span>
@@ -378,17 +391,17 @@ export function AiSpeakingExaminer({
 
           {recordingState === "recorded" && audioUrl && (
             <div className="w-full max-w-lg space-y-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5">
-              <div className="flex items-center justify-between text-xs font-mono text-emerald-400">
+              <div className="flex items-center justify-between text-xs font-mono text-emerald-200">
                 <span className="flex items-center gap-1.5">
                   <CheckCircle2 className="size-4" /> RESPONSE CAPTURED ({formatSec(recordingSeconds)})
                 </span>
-                <span className="text-white/40">READY FOR EVALUATION</span>
+                <span className="text-white/70">READY FOR EVALUATION</span>
               </div>
 
               <audio controls src={audioUrl} className="w-full rounded-lg" />
 
               <div className="flex items-center justify-between pt-1">
-                <p className="text-xs text-white/50">Your recording will be transcribed and scored by AI agents.</p>
+                <p className="text-xs text-white/70">Your recording will be transcribed and scored by AI agents.</p>
                 <Button
                   variant="outline"
                   size="sm"
@@ -402,7 +415,7 @@ export function AiSpeakingExaminer({
           )}
 
           {audioError && (
-            <p className="text-xs text-rose-300 flex items-center gap-1.5">
+            <p className="text-xs text-rose-200 flex items-center gap-1.5">
               <AlertCircle className="size-4 shrink-0" />
               {audioError}
             </p>
@@ -412,7 +425,7 @@ export function AiSpeakingExaminer({
         {/* Question Selector Tabs (if multi-question speaking set) */}
         {questions.length > 1 && (
           <div className="border-t border-white/10 pt-4">
-            <p className="text-[11px] font-mono uppercase tracking-wider text-white/40 mb-2">
+            <p className="text-[11px] font-mono uppercase tracking-wider text-white/70 mb-2">
               Interview Questions
             </p>
             <div className="flex flex-wrap gap-2">
@@ -425,8 +438,8 @@ export function AiSpeakingExaminer({
                   }}
                   className={`rounded-xl px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${
                     activeQuestionIndex === idx
-                      ? "border border-cyan-400/40 bg-cyan-400/20 text-cyan-300"
-                      : "border border-white/10 bg-white/5 text-white/60 hover:text-white hover:bg-white/10"
+                      ? "border border-cyan-400/40 bg-cyan-400/20 text-cyan-100"
+                      : "border border-white/10 bg-white/5 text-white/75 hover:text-white hover:bg-white/10"
                   }`}
                 >
                   Question {idx + 1}

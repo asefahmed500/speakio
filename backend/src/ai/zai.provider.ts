@@ -216,14 +216,18 @@ export class ZaiProvider {
   async *stream(
     options: GenerateOptions,
   ): AsyncGenerator<string, void, unknown> {
+    this.assertAvailable();
     try {
-      const stream = await this.getClient().chat.completions.create({
-        model: options.model,
-        messages: options.messages,
-        temperature: options.temperature ?? 0.2,
-        max_tokens: options.maxTokens ?? 2048,
-        stream: true,
-      });
+      const stream = await this.getClient().chat.completions.create(
+        {
+          model: options.model,
+          messages: options.messages,
+          temperature: options.temperature ?? 0.2,
+          max_tokens: options.maxTokens ?? 2048,
+          stream: true,
+        },
+        { timeout: options.timeoutMs ?? 90_000 },
+      );
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta?.content || '';

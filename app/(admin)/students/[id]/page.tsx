@@ -81,7 +81,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
   if (!studentId || loading) {
     return (
       <div className="flex-1 bg-surface-subtle">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-3" role="status" aria-live="polite">
+        <div className="w-full mx-auto px-4 sm:px-6 py-8 space-y-3" role="status" aria-live="polite">
           <div className="h-24 rounded-xl bg-border/40 animate-pulse" aria-hidden />
           <div className="h-48 rounded-xl bg-border/40 animate-pulse" aria-hidden />
           <span className="sr-only">Loading student…</span>
@@ -93,7 +93,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
   if (error || !student) {
     return (
       <div className="flex-1 bg-surface-subtle">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-4">
+        <div className="w-full mx-auto px-4 sm:px-6 py-8 space-y-4">
           <ButtonLink variant="outline" size="sm" href="/students" className="cursor-pointer">
             <ArrowLeft className="mr-2 h-3.5 w-3.5" aria-hidden /> All students
           </ButtonLink>
@@ -113,7 +113,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="flex-1 bg-surface-subtle">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
+      <div className="w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
         <ButtonLink variant="outline" size="sm" href="/students" className="cursor-pointer">
           <ArrowLeft className="mr-2 h-3.5 w-3.5" aria-hidden /> All students
         </ButtonLink>

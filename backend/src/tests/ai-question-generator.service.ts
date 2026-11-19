@@ -103,8 +103,8 @@ export class AiQuestionGeneratorService {
     const excludeBlock =
       params.excludeSamplePrompts.length > 0
         ? `\n\nDo NOT repeat or closely paraphrase these existing question prompts:\n${params.excludeSamplePrompts
-            .slice(0, 40)
-            .map((p) => `- ${p.slice(0, 160)}`)
+            .slice(0, 8)
+            .map((p) => `- ${p.slice(0, 120)}`)
             .join('\n')}`
         : '';
 
@@ -117,11 +117,14 @@ export class AiQuestionGeneratorService {
 
     const { data, result } = await this.aiService
       .executeStructuredTask<z.infer<typeof modelOutputSchema>>({
-        taskType: 'REASONING_EVAL',
+        taskType: 'EXTRACTION',
         responseFormat: { type: 'json_object' },
         temperature: 0.7,
-        maxTokens: 6000,
-        timeoutMs: 150_000,
+        // Short prompt + bounded output keeps one attempt inside Cloudflare's
+        // 100 s edge timeout; the previous 6000-token/40-prompt version
+        // retried past the E2E deadline.
+        maxTokens: 4000,
+        timeoutMs: 90_000,
         messages: [
           {
             role: 'system',

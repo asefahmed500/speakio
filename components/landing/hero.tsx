@@ -1,12 +1,13 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useEffect, useState } from "react"
 import Link from "next/link"
 import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "motion/react"
 import { Menu, X } from "lucide-react"
 import { ButtonLink } from "@/components/ui/button"
 import { AnimatedWords, EASE } from "@/components/landing/motion"
 import { HeroMedia } from "@/components/landing/hero-media"
+import { apiFetch } from "@/lib/api-client"
 import { cn } from "@/lib/utils"
 
 const NAV_LINKS = [
@@ -19,6 +20,30 @@ const CAPABILITIES = ["AI Band Scoring", "Real Exam Engine", "Verifiable Certifi
 
 function FloatingHeader() {
   const [menuOpen, setMenuOpen] = useState(false)
+  // Tri-state: render neither "Login" nor "Dashboard" until the session check
+  // settles, so signed-in visitors never see a Login flash. A failed/401
+  // /auth/me call is treated as a guest silently (no console error, no UI).
+  const [sessionRole, setSessionRole] = useState<"loading" | "USER" | "ADMIN" | "guest">("loading")
+  useEffect(() => {
+    let active = true
+    void apiFetch<{ role: "USER" | "ADMIN" }>("/auth/me", { timeoutMs: 8_000 })
+      .then(({ data, error }) => {
+        if (!active) return
+        setSessionRole(!error && (data?.role === "USER" || data?.role === "ADMIN") ? data.role : "guest")
+      })
+      .catch(() => {
+        // apiFetch already swallows HTTP/network failures — this is only a
+        // last-resort guard so an unexpected throw cannot break the header.
+        if (active) setSessionRole("guest")
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+  const signedIn = sessionRole === "USER" || sessionRole === "ADMIN"
+  const dashboardHref = sessionRole === "ADMIN" ? "/overview" : "/dashboard"
+  const authHref = signedIn ? dashboardHref : "/login"
+  const authLabel = sessionRole === "loading" ? "Account" : signedIn ? "Dashboard" : "Login"
   // Over the hero the nav is white-on-dark glass; past the hero (white
   // sections) it flips to a light pill so it stays visible on every section.
   const [scrolled, setScrolled] = useState(false)
@@ -80,27 +105,19 @@ function FloatingHeader() {
           <span className="font-display text-sm font-medium tracking-tight">Speakio</span>
         </Link>
 
-        {/* Desktop staged navigation reveal: login pill first, width expands,
-            then the links fade in. */}
-        <motion.nav
+        {/* Desktop navigation. No width/entry animation of its own — the pill
+            keeps its natural auto width and rides the header's smooth slide + fade,
+            so links never pop in and the shape never jumps. */}
+        <nav
           className={cn(
             "hidden items-center gap-1 rounded-2xl border p-1.5 backdrop-blur-md transition-colors duration-300 md:flex",
             scrolled
               ? "border-neutral-200 bg-white/85 shadow-sm shadow-black/5"
               : "border-white/15 bg-white/10"
           )}
-          style={{ overflow: "hidden" }}
-          initial={{ width: 110 }}
-          animate={{ width: "auto" }}
-          transition={{ duration: 0.8, delay: 1.1, ease: EASE }}
           aria-label="Primary"
         >
-          <motion.div
-            className="flex items-center gap-1"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, delay: 1.5, ease: EASE }}
-          >
+          <div className="flex items-center gap-1">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.label}
@@ -115,18 +132,28 @@ function FloatingHeader() {
                 {link.label}
               </Link>
             ))}
-          </motion.div>
-          <Link
-            href="/login"
-            className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-neutral-200"
-          >
-            Login
-          </Link>
-        </motion.nav>
+          </div>
+          {sessionRole === "loading" ? (
+            <span
+              aria-live="polite"
+              className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-black opacity-80"
+            >
+              {authLabel}
+            </span>
+          ) : (
+            <Link
+              href={authHref}
+              className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-neutral-200"
+            >
+              {authLabel}
+            </Link>
+          )}
+        </nav>
 
-        {/* Mobile: circular menu toggle. */}
+        {/* Mobile: circular menu toggle. No independent entry animation — it
+            fades in with the header, matching the desktop nav exactly. */}
         <div className="relative md:hidden">
-          <motion.button
+          <button
             type="button"
             onClick={() => setMenuOpen((open) => !open)}
             aria-expanded={menuOpen}
@@ -137,12 +164,9 @@ function FloatingHeader() {
                 ? "border-neutral-200 bg-white/90 text-neutral-800 shadow-sm"
                 : "border-white/25 bg-white/10 text-white"
             )}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, delay: 1.1 }}
           >
             {menuOpen ? <X className="size-4" /> : <Menu className="size-4" />}
-          </motion.button>
+          </button>
           <AnimatePresence>
             {menuOpen && (
               <motion.div
@@ -162,13 +186,22 @@ function FloatingHeader() {
                     {link.label}
                   </Link>
                 ))}
-                <Link
-                  href="/login"
-                  onClick={() => setMenuOpen(false)}
-                  className="mt-1 block rounded-xl bg-white px-3.5 py-2.5 text-center text-sm font-medium text-black"
-                >
-                  Login
-                </Link>
+                {sessionRole === "loading" ? (
+                  <span
+                    aria-live="polite"
+                    className="mt-1 block rounded-xl bg-white px-3.5 py-2.5 text-center text-sm font-medium text-black opacity-80"
+                  >
+                    {authLabel}
+                  </span>
+                ) : (
+                  <Link
+                    href={authHref}
+                    onClick={() => setMenuOpen(false)}
+                    className="mt-1 block rounded-xl bg-white px-3.5 py-2.5 text-center text-sm font-medium text-black"
+                  >
+                    {authLabel}
+                  </Link>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

@@ -175,6 +175,9 @@ model Attempt {
 
   @@index([userId, startedAt(sort: Desc)])
   @@index([userId, testSetId, status])
+  /// Supports content-management lookups that filter by test set alone
+  /// (attempt counts before set/question deletion, cascade cleanup).
+  @@index([testSetId])
   @@map("attempts")
 }
 

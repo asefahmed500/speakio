@@ -132,7 +132,7 @@ export default function AiReviewMonitorPage() {
 
   return (
     <div className="flex-1 bg-surface-subtle">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
+      <div className="w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">AI Reviews</h1>
@@ -272,7 +272,7 @@ export default function AiReviewMonitorPage() {
                     aria-pressed={overrideBand === band}
                     className={`rounded-lg py-2 text-xs font-medium border transition-colors cursor-pointer ${
                       overrideBand === band
-                        ? "border-primary bg-primary text-foreground"
+                        ? "border-primary bg-primary text-primary-foreground"
                         : "border-border bg-surface-subtle hover:bg-card"
                     }`}
                   >

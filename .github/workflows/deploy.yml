@@ -47,14 +47,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # The API Worker (reverse proxy) is deployed first so the frontend's
-      # baked NEXT_PUBLIC_API_URL always points at a live endpoint.
-      - name: Deploy API Worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --config api-proxy/wrangler.jsonc
+      # The API Worker is intentionally NOT deployed here: its API_ORIGIN is
+      # an ephemeral tunnel URL rewritten by ops/api-watchdog.ps1 on the
+      # Windows host. Deploying it from CI would bake a dead origin.
+      # Use deploy.ps1 on the host for a full stack recovery.
       - name: Build frontend Worker
         run: npm run cf:build
         env:

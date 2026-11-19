@@ -23,9 +23,25 @@ the API Worker's `API_ORIGIN` and redeploys it.
 created through registration, and the first ADMIN is bootstrapped with
 `ADMIN_EMAIL=... ADMIN_PASSWORD=<12+ chars> npm run create-admin`.
 
-The frontend Worker auto-scales on Cloudflare's edge. The API Worker gives a
-stable API hostname; only the tunnel origin is ephemeral (URL changes whenever
-the tunnel restarts).
+## Production architecture (current)
+
+- **API**: NestJS on **Vercel** (`speakio-api` project, `backend/api/index.ts`,
+  Node 24, `maxDuration: 60s`, 1024 MB) with Prisma cloud Postgres. Env vars
+  live in Vercel's encrypted store (`vercel env ls production`). Coach,
+  question-generation and paraphrase traffic routes to the fast
+  `@cf/meta/llama-3.3-70b` model so HTTP-awaited AI calls finish inside
+  Vercel's 60 s cap, while essay/speaking grading keeps the reasoning GLM
+  model and runs inline (`VERCEL` makes scoring await instead of
+  fire-and-forget — there is no background process on serverless).
+- **Frontend**: Cloudflare Workers (`speakio-web`, OpenNext) — the only
+  Cloudflare-hosted compute.
+- **API proxy**: Cloudflare Worker `speakio-api` reverse-proxies `/api/*`
+  from the frontend host to `https://speakio-api.vercel.app` (stable origin —
+  the ephemeral quick tunnel is retired). Auth cookies are set on the
+  frontend host, which is required because `workers.dev` is a Public Suffix.
+
+Deploy everything with `powershell -File .\deploy.ps1` (Vercel backend,
+API Worker repoint, frontend build + deploy, live verification).
 
 ## API client contract
 
@@ -100,6 +116,23 @@ API token with Workers AI permission.
 Study-plan generation deliberately asks for 5–7 short milestones with
 `maxTokens: 4000` and `timeoutMs: 90_000`: longer prompts overflowed the token
 budget and retried past Cloudflare's 100 s edge timeout (524).
+
+### CI/CD (GitHub Actions)
+
+`.github/workflows/deploy.yml` needs two repository secrets:
+
+- `CLOUDFLARE_API_TOKEN` — a Cloudflare API token with Workers Scripts:Edit
+  and Workers Static Assets:Edit for this account.
+- `CLOUDFLARE_ACCOUNT_ID` — the account ID (`1945c662…` for this project).
+
+CI builds and deploys **only the frontend Worker**. It deliberately does NOT
+deploy `speakio-api`: that Worker's `API_ORIGIN` is an ephemeral
+`trycloudflare.com` URL rewritten on the Windows host by
+`ops/api-watchdog.ps1`, so a CI deploy would bake a dead origin. Run
+`deploy.ps1` on the host after a reboot or tunnel change to update the origin
+and redeploy the API Worker. A fresh clone cannot deploy a working backend
+from CI alone — the NestJS process and tunnel still run on the host (Containers
+require the paid Cloudflare plan).
 
 ### Cloudflare database status
 

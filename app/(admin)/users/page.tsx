@@ -111,7 +111,7 @@ export default function UsersAdminPage() {
 
   return (
     <div className="flex-1 bg-surface-subtle">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
+      <div className="w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">User Management</h1>
@@ -150,9 +150,9 @@ export default function UsersAdminPage() {
             onChange={(e) => setRoleFilter(e.target.value)}
             className="h-10 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring"
           >
-            <option value="">All roles</option>
+            <option value="" className="bg-card text-foreground">All roles</option>
             {ROLES.map((r) => (
-              <option key={r} value={r}>{r}</option>
+              <option key={r} value={r} className="bg-card text-foreground">{r}</option>
             ))}
           </select>
           <select
@@ -161,9 +161,9 @@ export default function UsersAdminPage() {
             onChange={(e) => setStatusFilter(e.target.value)}
             className="h-10 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring"
           >
-            <option value="">All statuses</option>
-            <option value="ACTIVE">Active</option>
-            <option value="SUSPENDED">Suspended</option>
+            <option value="" className="bg-card text-foreground">All statuses</option>
+            <option value="ACTIVE" className="bg-card text-foreground">Active</option>
+            <option value="SUSPENDED" className="bg-card text-foreground">Suspended</option>
           </select>
           <Button variant="outline" size="sm" onClick={() => void fetchUsers()} disabled={loading} className="cursor-pointer h-10">
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : "Refresh"}
@@ -224,7 +224,7 @@ export default function UsersAdminPage() {
                         className="h-8 rounded-lg border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring cursor-pointer"
                       >
                         {ROLES.map((r) => (
-                          <option key={r} value={r}>{r}</option>
+                          <option key={r} value={r} className="bg-card text-foreground">{r}</option>
                         ))}
                       </select>
                       {rowError?.id === user.id && (

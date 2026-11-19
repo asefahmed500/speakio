@@ -103,9 +103,12 @@ export class DashboardService {
       }),
     ]);
 
+    // Bounded history for the chart: an unbounded scan grows with every
+    // attempt and has no place in a request path.
     const bands = await this.prisma.score.findMany({
       where: { attempt: { userId }, skill },
       orderBy: { createdAt: 'asc' },
+      take: 200,
       select: { bandScore: true, createdAt: true },
     });
 

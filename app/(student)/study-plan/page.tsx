@@ -202,8 +202,8 @@ export default function StudyPlanPage() {
     <div className="relative min-h-0 bg-background text-foreground">
       {/* Ambient Lighting Orbs */}
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden>
-        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-cyan-500/10 blur-[130px]" />
-        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-indigo-500/10 blur-[150px]" />
+        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-primary/5 blur-[130px]" />
+        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-primary/5 blur-[150px]" />
         <div
           className="absolute inset-0 opacity-[0.025]"
           style={{
@@ -213,12 +213,12 @@ export default function StudyPlanPage() {
         />
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-8">
+      <div className="w-full mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-8">
         {/* Header Hero Banner */}
-        <div className="relative overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-[#16213A]/80 via-[#10192B]/90 to-[#0B0E14] p-6 sm:p-8 backdrop-blur-2xl shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+        <div className="relative overflow-hidden rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-2xl shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1 text-[11px] font-mono tracking-widest text-cyan-300 uppercase">
-              <Sparkles className="size-3.5 text-cyan-400" />
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1 text-[11px] font-mono tracking-widest text-muted-foreground uppercase">
+              <Sparkles className="size-3.5 text-muted-foreground" />
               <span>AI Study Planner</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
@@ -241,7 +241,7 @@ export default function StudyPlanPage() {
                 </>
               ) : (
                 <>
-                  <Sparkles className="mr-2 size-3.5 text-cyan-600" />
+                  <Sparkles className="mr-2 size-3.5 text-muted-foreground" />
                   {plan.length === 0 ? "Generate AI Plan" : "Regenerate Plan"}
                 </>
               )}
@@ -250,15 +250,15 @@ export default function StudyPlanPage() {
         </div>
 
         {planError && (
-          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-200 flex items-start gap-2.5">
-            <AlertCircle className="size-4 shrink-0 mt-0.5 text-amber-400" />
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-700 flex items-start gap-2.5">
+            <AlertCircle className="size-4 shrink-0 mt-0.5 text-amber-700" />
             <span>{planError}</span>
           </div>
         )}
 
         {saveError && (
-          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-200 flex items-start gap-2.5">
-            <AlertCircle className="size-4 shrink-0 mt-0.5 text-red-400" />
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-700 flex items-start gap-2.5">
+            <AlertCircle className="size-4 shrink-0 mt-0.5 text-red-700" />
             <span>{saveError}</span>
           </div>
         )}
@@ -267,7 +267,7 @@ export default function StudyPlanPage() {
         <div className="rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl space-y-5">
           <div className="flex items-center justify-between border-b border-border pb-3">
             <h2 className="text-sm font-semibold text-foreground">Candidate Plan Parameters</h2>
-            <span className="text-xs font-mono text-cyan-300">CUSTOM SCHEDULE</span>
+            <span className="text-xs font-mono text-muted-foreground">CUSTOM SCHEDULE</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -284,7 +284,7 @@ export default function StudyPlanPage() {
                 className="h-10 rounded-xl border-border bg-surface-subtle text-xs text-foreground"
               />
               {daysToExam != null && daysToExam >= 0 && (
-                <p className="text-[11px] text-cyan-300 flex items-center gap-1 font-mono">
+                <p className="text-[11px] text-muted-foreground flex items-center gap-1 font-mono">
                   <CalendarDays className="size-3" />
                   {daysToExam} {daysToExam === 1 ? "day" : "days"} remaining
                 </p>
@@ -314,12 +314,12 @@ export default function StudyPlanPage() {
                 id="sp-weakest"
                 value={weakestSkill}
                 onChange={(e) => setWeakestSkill(e.target.value)}
-                className="h-10 w-full rounded-xl border border-border bg-surface-subtle px-3 text-xs text-foreground outline-none focus:border-cyan-400"
+                className="h-10 w-full rounded-xl border border-border bg-surface-subtle px-3 text-xs text-foreground outline-none focus:border-primary"
               >
-                <option value="LISTENING" className="bg-[#121927] text-foreground">Listening</option>
-                <option value="READING" className="bg-[#121927] text-foreground">Reading</option>
-                <option value="WRITING" className="bg-[#121927] text-foreground">Writing</option>
-                <option value="SPEAKING" className="bg-[#121927] text-foreground">Speaking</option>
+                <option value="LISTENING" className="bg-card text-foreground">Listening</option>
+                <option value="READING" className="bg-card text-foreground">Reading</option>
+                <option value="WRITING" className="bg-card text-foreground">Writing</option>
+                <option value="SPEAKING" className="bg-card text-foreground">Speaking</option>
               </select>
             </div>
           </div>
@@ -335,7 +335,7 @@ export default function StudyPlanPage() {
               Save Parameters
             </Button>
             {saveSuccess && (
-              <span className="inline-flex items-center gap-1 text-xs text-emerald-400 font-mono">
+              <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-mono">
                 <CheckCircle2 className="size-3.5" /> Saved to account
               </span>
             )}
@@ -350,14 +350,14 @@ export default function StudyPlanPage() {
                 <h2 className="text-base font-semibold text-foreground">Milestone Completion</h2>
                 <p className="text-xs text-muted-foreground">Track your daily IELTS practice tasks</p>
               </div>
-              <span className="text-xs font-mono text-cyan-300">
+              <span className="text-xs font-mono text-muted-foreground">
                 {completed}/{plan.length} DONE ({progressPct}%)
               </span>
             </div>
 
             <div className="h-2 w-full overflow-hidden rounded-full bg-card">
               <div
-                className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-500"
+                className="h-full bg-primary transition-all duration-500"
                 style={{ width: `${progressPct}%` }}
               />
             </div>
@@ -370,7 +370,7 @@ export default function StudyPlanPage() {
                     key={milestone.id}
                     className={`rounded-2xl border p-4 sm:p-5 flex items-start gap-4 transition-all ${
                       milestone.isCompleted
-                        ? "border-emerald-500/30 bg-emerald-500/5 text-muted-foreground"
+                        ? "border-border bg-emerald-500/5 text-muted-foreground"
                         : "border-border bg-surface-subtle hover:bg-surface-subtle"
                     }`}
                   >
@@ -379,10 +379,10 @@ export default function StudyPlanPage() {
                       onClick={() => void handleToggle(milestone.id)}
                       disabled={saving}
                       aria-pressed={milestone.isCompleted}
-                      className="mt-0.5 shrink-0 text-muted-foreground hover:text-cyan-400 cursor-pointer"
+                      className="mt-0.5 shrink-0 text-muted-foreground hover:text-muted-foreground cursor-pointer"
                     >
                       {milestone.isCompleted ? (
-                        <CheckCircle2 className="size-5 text-emerald-400" />
+                        <CheckCircle2 className="size-5 text-emerald-700" />
                       ) : (
                         <Circle className="size-5" />
                       )}
@@ -393,7 +393,7 @@ export default function StudyPlanPage() {
                         <span className={`text-sm font-medium ${milestone.isCompleted ? "line-through text-muted-foreground" : "text-foreground"}`}>
                           {milestone.title}
                         </span>
-                        <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-subtle px-2.5 py-0.5 text-[10px] font-mono text-cyan-300">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-subtle px-2.5 py-0.5 text-[10px] font-mono text-muted-foreground">
                           <Icon className="size-3" />
                           {SKILL_LABEL[milestone.skill] ?? milestone.skill}
                         </span>
@@ -412,7 +412,7 @@ export default function StudyPlanPage() {
         {/* Empty State */}
         {plan.length === 0 && (
           <div className="rounded-3xl border border-border bg-surface-subtle p-10 text-center space-y-4 backdrop-blur-xl">
-            <Target className="size-10 text-cyan-400 mx-auto" />
+            <Target className="size-10 text-muted-foreground mx-auto" />
             <div className="space-y-1">
               <h2 className="text-lg font-semibold text-foreground">No Active Plan Configured</h2>
               <p className="text-xs text-muted-foreground max-w-md mx-auto">

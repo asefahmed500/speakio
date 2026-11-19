@@ -224,11 +224,8 @@ function AppShellContent({ children }: { children: React.ReactNode }) {
       <ConfirmationModal
         isOpen={showLogoutModal}
         title="Sign out?"
-        description={
-          logoutError
-            ? `Sign out failed: ${logoutError} Your session is still active — please try again.`
-            : "You will be signed out of all devices. Your saved practice work stays in your account."
-        }
+        description="You will be signed out of all devices. Your saved practice work stays in your account."
+        error={logoutError}
         intent={logoutError ? "destructive" : "warning"}
         confirmLabel="Sign out"
         cancelLabel="Stay signed in"

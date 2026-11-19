@@ -36,7 +36,7 @@ Speakio is a role-based web platform for complete IELTS Academic preparation —
 | Web | Next.js 16 (App Router), TypeScript, Tailwind CSS v4, shadcn/ui (Base UI), Zustand, react-hook-form + Zod |
 | Backend | NestJS, TypeScript, Zod validation pipes |
 | Database | PostgreSQL + Prisma ORM |
-| AI | Z.AI (GLM models) — writing/speaking scoring agents |
+| AI | Cloudflare Workers AI (free GLM-4.7 reasoning + Llama-3.3-70b fast) — LangGraph scoring agents |
 | Auth | JWT in httpOnly cookies (`secure` in production, `sameSite: lax`) |
 
 ### Design system
@@ -85,7 +85,7 @@ cd backend
 npm install
 cp .env.example .env        # fill in DATABASE_URL, JWT_SECRET, ZAI_API_KEY
 npx prisma migrate dev      # apply migrations
-npx prisma db seed          # seed test sets + admin user
+npx prisma db seed          # seed IELTS test content (no demo accounts)
 npm run start:dev           # http://localhost:4000
 ```
 
@@ -95,7 +95,7 @@ Health check: `GET http://localhost:4000/health` → `{"status":"ok","database":
 
 ```bash
 npm install
-cp .env.example .env.local  # NEXT_PUBLIC_API_URL=http://localhost:4000
+cp .env.example .env.local  # NEXT_PUBLIC_API_URL=http://localhost:4040 for local backend
 npm run dev                 # http://localhost:3000
 ```
 
@@ -104,15 +104,15 @@ npm run dev                 # http://localhost:3000
 **Frontend (`.env.local`)**
 | Key | Description |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | Backend base URL (default `http://localhost:4000`) |
+| `NEXT_PUBLIC_API_URL` | Backend base URL (`http://localhost:4040` locally; the same-origin `/api` path in production) |
 
 **Backend (`.env`)**
 | Key | Description |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_SECRET` | At least 32 random characters |
-| `JWT_EXPIRES_IN` | e.g. `7d` |
-| `ZAI_API_KEY` / `ZAI_BASE_URL` | Z.AI model access |
+| `JWT_EXPIRES_IN` | Access-token TTL (default `15m`) |
+| `ZAI_API_KEY` / `ZAI_BASE_URL` | Cloudflare Workers AI access (OpenAI-compatible endpoint) |
 | `FRONTEND_URL` | Comma-separated CORS origins |
 
 > Never commit real `.env` files — both are git-ignored; only `.env.example` placeholders are tracked.

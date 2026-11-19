@@ -72,7 +72,7 @@ export default function TakeTestPage() {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const [bannerError, setBannerError] = useState<string | null>(null)
   const [draftRestored, setDraftRestored] = useState(false)
-  const [saveState, setSaveState] = useState<"idle" | "saved" | "error">("idle")
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle")
 
   // Sound check modal state
   const [showSoundCheck, setShowSoundCheck] = useState(true)
@@ -93,6 +93,7 @@ export default function TakeTestPage() {
   const attemptRef = useRef(attempt)
   const submittingRef = useRef(false)
   const autoSubmitRef = useRef(false)
+  const autosavingRef = useRef(false)
 
   // Speaking state (for submission compatibility)
   const [speakingRecorded, setSpeakingRecorded] = useState(false)
@@ -109,21 +110,27 @@ export default function TakeTestPage() {
 
   const autosave = useCallback(async () => {
     const currentAttempt = attemptRef.current
-    if (!currentAttempt || submittingRef.current) return
-    const { error: autosaveError } = await apiFetch(`/attempts/${currentAttempt.id}`, {
-      method: "PATCH",
-      timeoutMs: 0,
-      json: {
-        answers: answersRef.current,
-        timeRemainingSeconds: secondsRef.current ?? undefined,
-      },
-    })
-    if (autosaveError) {
-      setSaveState("error")
-      return
+    if (!currentAttempt || submittingRef.current || autosavingRef.current) return
+    autosavingRef.current = true
+    setSaveState("saving")
+    try {
+      const { error: autosaveError } = await apiFetch(`/attempts/${currentAttempt.id}`, {
+        method: "PATCH",
+        timeoutMs: 0,
+        json: {
+          answers: answersRef.current,
+          timeRemainingSeconds: secondsRef.current ?? undefined,
+        },
+      })
+      if (autosaveError) {
+        setSaveState("error")
+        return
+      }
+      setSaveState("saved")
+      markSaved()
+    } finally {
+      autosavingRef.current = false
     }
-    setSaveState("saved")
-    markSaved()
   }, [markSaved])
 
   const doSubmit = useCallback(
@@ -309,6 +316,8 @@ export default function TakeTestPage() {
     ? typedSpeakingText.trim().split(/\s+/).filter(Boolean).length
     : 0
 
+  const isSubmitting = phase === "submitting"
+
   const canSubmit =
     !isFullMock &&
     (timeExpired ||
@@ -323,7 +332,7 @@ export default function TakeTestPage() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground p-4">
         <div className="text-center space-y-4">
-          <Loader2 className="size-8 animate-spin text-cyan-400 mx-auto" aria-hidden />
+          <Loader2 className="size-8 animate-spin text-muted-foreground mx-auto" aria-hidden />
           <div className="space-y-1">
             <h2 className="text-lg font-medium text-foreground">
               {phase === "submitting" ? "Transmitting Exam Answers…" : "Preparing IELTS Exam Room…"}
@@ -363,9 +372,9 @@ export default function TakeTestPage() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground p-6">
         <div className="max-w-md text-center space-y-4">
-          <AlertCircle className="size-10 text-red-400 mx-auto" aria-hidden />
+          <AlertCircle className="size-10 text-red-700 mx-auto" aria-hidden />
           <h1 className="text-xl font-semibold text-foreground">Unable to Enter Exam</h1>
-          <p className="text-sm text-red-200/80">{loadError ?? "An unexpected error occurred."}</p>
+          <p className="text-sm text-red-700">{loadError ?? "An unexpected error occurred."}</p>
           <Button
             onClick={() => window.location.reload()}
             className="rounded-xl bg-white text-black hover:bg-neutral-200"
@@ -406,7 +415,7 @@ export default function TakeTestPage() {
           <div className="min-w-0">
             <h1 className="text-sm font-semibold truncate text-foreground">{test.title}</h1>
             <p className="text-[11px] text-muted-foreground flex items-center gap-2">
-              <span className="font-mono text-cyan-300">{test.moduleType}</span>
+              <span className="font-mono text-muted-foreground">{test.moduleType}</span>
               <span>·</span>
               <span>{test.skill}</span>
               <span>·</span>
@@ -422,9 +431,9 @@ export default function TakeTestPage() {
           <div
             className={`flex items-center gap-2 rounded-xl px-3.5 py-1.5 border font-mono text-sm font-semibold tabular-nums shadow-inner transition-colors ${
               secondsLeft !== null && secondsLeft <= 120
-                ? "border-red-500/50 bg-red-500/20 text-red-300 animate-pulse"
+                ? "border-red-500/50 bg-red-500/10 text-red-700 animate-pulse"
                 : secondsLeft !== null && secondsLeft <= 300
-                  ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
+                  ? "border-amber-500/40 bg-amber-500/15 text-amber-700"
                   : "border-border bg-surface-subtle text-foreground"
             }`}
           >
@@ -443,14 +452,19 @@ export default function TakeTestPage() {
             <span>Audio Check</span>
           </Button>
 
+          {saveState === "saving" && (
+            <span role="status" className="inline-flex items-center gap-1 text-[11px] text-neutral-700 font-mono whitespace-nowrap">
+              <Loader2 className="size-3 animate-spin" /> Saving…
+            </span>
+          )}
           {saveState === "saved" && (
-            <span className="hidden md:inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
-              <span className="size-1.5 rounded-full bg-emerald-400" /> Saved
+            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-mono whitespace-nowrap">
+              <span className="size-1.5 rounded-full bg-emerald-600" /> Saved
             </span>
           )}
           {saveState === "error" && (
-            <span className="hidden md:inline-flex items-center gap-1 text-[11px] text-amber-400 font-mono">
-              <AlertCircle className="size-3" /> Save pending
+            <span role="alert" className="inline-flex items-center gap-1 text-[11px] text-red-700 font-mono whitespace-nowrap">
+              <AlertCircle className="size-3" /> Not saved — retrying
             </span>
           )}
         </div>
@@ -459,8 +473,8 @@ export default function TakeTestPage() {
       {/* Main Examination Canvas */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
         {draftRestored && (
-          <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 text-cyan-200 text-xs px-4 py-2.5 flex items-center gap-2">
-            <CheckCircle2 className="size-4 shrink-0 text-cyan-400" />
+          <div className="rounded-xl border border-primary/30 bg-muted text-foreground text-xs px-4 py-2.5 flex items-center gap-2">
+            <CheckCircle2 className="size-4 shrink-0 text-muted-foreground" />
             <span>Your unsaved progress from a previous session was securely restored.</span>
           </div>
         )}
@@ -468,9 +482,9 @@ export default function TakeTestPage() {
         {bannerError && (
           <div
             role="alert"
-            className="rounded-xl border border-red-500/30 bg-red-500/10 text-red-200 text-xs px-4 py-3 flex items-start gap-2.5"
+            className="rounded-xl border border-red-500/30 bg-red-500/10 text-red-700 text-xs px-4 py-3 flex items-start gap-2.5"
           >
-            <AlertCircle className="size-4 shrink-0 mt-0.5 text-red-400" />
+            <AlertCircle className="size-4 shrink-0 mt-0.5 text-red-700" />
             <span>{bannerError}</span>
           </div>
         )}
@@ -493,7 +507,7 @@ export default function TakeTestPage() {
                 <p className="text-xs font-medium text-muted-foreground">
                   No microphone? Type your spoken answer instead — free AI review, no audio service needed.
                 </p>
-                <span className="shrink-0 font-mono text-[11px] text-cyan-300">
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
                   {typedSpeakingWords}/40 words
                 </span>
               </div>
@@ -521,7 +535,7 @@ export default function TakeTestPage() {
                 <span className="text-xs font-mono tracking-widest text-muted-foreground uppercase">
                   WRITING TASK STIMULUS
                 </span>
-                <span className="text-xs font-mono text-cyan-300">ACADEMIC CRITERIA</span>
+                <span className="text-xs font-mono text-muted-foreground">ACADEMIC CRITERIA</span>
               </div>
 
               {test.questions.map((q) => (
@@ -552,9 +566,9 @@ export default function TakeTestPage() {
                   <span
                     className={`font-mono text-xs px-2.5 py-0.5 rounded-full border ${
                       essayWordCount >= 150
-                        ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                        ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-700"
                         : essayWordCount >= 20
-                          ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
+                          ? "border-amber-400/40 bg-amber-400/10 text-amber-700"
                           : "border-border bg-surface-subtle text-muted-foreground"
                     }`}
                   >
@@ -573,7 +587,7 @@ export default function TakeTestPage() {
                   value={answers[q.id] ?? ""}
                   onChange={(e) => setAnswer(q.id, e.target.value)}
                   placeholder="Type your IELTS essay here. Focus on formal academic register, clear paragraphing, and evidence…"
-                  className="min-h-[460px] rounded-2xl border-border bg-surface-subtle text-sm leading-relaxed text-foreground placeholder:text-foreground/30 focus:border-cyan-400/40 focus:ring-1 focus:ring-cyan-400/30 p-4 font-sans"
+                  className="min-h-[460px] rounded-2xl border-border bg-surface-subtle text-sm leading-relaxed text-foreground placeholder:text-foreground/30 focus:border-primary/40 focus:ring-1 focus:ring-cyan-400/30 p-4 font-sans"
                 />
               ))}
 
@@ -597,7 +611,7 @@ export default function TakeTestPage() {
             <div className="rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-xl space-y-6">
               <div className="flex items-center justify-between border-b border-border pb-4">
                 <h2 className="text-base font-semibold text-foreground">Questions 1 to {test.questions.length}</h2>
-                <span className="text-xs font-mono text-cyan-300">LISTEN & ANSWER</span>
+                <span className="text-xs font-mono text-muted-foreground">LISTEN & ANSWER</span>
               </div>
 
               <div className="space-y-4">
@@ -606,13 +620,13 @@ export default function TakeTestPage() {
                     key={q.id}
                     className={`rounded-2xl border p-5 transition-all ${
                       idx === currentQuestionIndex
-                        ? "border-cyan-400/40 bg-surface-subtle shadow-lg shadow-cyan-500/5"
+                        ? "border-primary/40 bg-surface-subtle shadow-lg "
                         : "border-border bg-surface-subtle"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-sm font-medium text-foreground/95 leading-relaxed">
-                        <span className="font-mono text-cyan-400 mr-2">{idx + 1}.</span>
+                        <span className="font-mono text-muted-foreground mr-2">{idx + 1}.</span>
                         {q.prompt}
                       </p>
                     </div>
@@ -629,7 +643,7 @@ export default function TakeTestPage() {
                                 htmlFor={optId}
                                 className={`flex items-center gap-3 rounded-xl border p-3 text-xs cursor-pointer transition-all ${
                                   selected
-                                    ? "border-cyan-400 bg-cyan-400/15 text-foreground font-medium"
+                                    ? "border-primary bg-cyan-400/15 text-foreground font-medium"
                                     : "border-border bg-surface-subtle text-muted-foreground hover:bg-surface-subtle hover:text-foreground"
                                 }`}
                               >
@@ -670,7 +684,7 @@ export default function TakeTestPage() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left: Reading Passage with font tools */}
             <div className="lg:col-span-6 rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl space-y-4 max-h-[75vh] overflow-y-auto">
-              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-[#10192B]/90 backdrop-blur-md pb-3 pt-1">
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card/95 backdrop-blur-md pb-3 pt-1">
                 <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
                   READING PASSAGE
                 </span>
@@ -707,7 +721,7 @@ export default function TakeTestPage() {
                   className="rounded-2xl border border-border bg-surface-subtle p-5 backdrop-blur-xl space-y-3"
                 >
                   <p className="text-sm font-medium text-foreground/95 leading-relaxed">
-                    <span className="font-mono text-cyan-400 mr-2">{idx + 1}.</span>
+                    <span className="font-mono text-muted-foreground mr-2">{idx + 1}.</span>
                     {q.prompt}
                   </p>
 
@@ -722,7 +736,7 @@ export default function TakeTestPage() {
                             htmlFor={optId}
                             className={`flex items-center gap-2.5 rounded-xl border p-3 text-xs cursor-pointer transition-all ${
                               selected
-                                ? "border-cyan-400 bg-cyan-400/15 text-foreground font-medium"
+                                ? "border-primary bg-cyan-400/15 text-foreground font-medium"
                                 : "border-border bg-surface-subtle text-muted-foreground hover:bg-surface-subtle hover:text-foreground"
                             }`}
                           >
@@ -757,7 +771,7 @@ export default function TakeTestPage() {
         )}
 
         {/* Global Submit Action Bar */}
-        <div className="rounded-3xl border border-border bg-gradient-to-r from-[#16213A]/90 to-[#0A0F1A] p-5 backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
+        <div className="rounded-3xl border border-border bg-surface-subtle p-5 backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
           <div className="space-y-1">
             <h4 className="text-sm font-semibold text-foreground">Ready to complete your examination?</h4>
             <p className="text-xs text-muted-foreground">
@@ -777,11 +791,15 @@ export default function TakeTestPage() {
 
           <Button
             onClick={() => void doSubmit(false)}
-            disabled={!canSubmit}
+            disabled={!canSubmit || isSubmitting}
             className="cursor-pointer rounded-xl bg-white px-6 py-2.5 text-sm font-medium text-black hover:bg-neutral-200 disabled:opacity-40 transition-all shadow-md shrink-0"
           >
-            <span>Submit Test for AI Evaluation</span>
-            <ArrowRight className="size-4 ml-1.5" />
+            {isSubmitting ? (
+              <Loader2 className="size-4 mr-1.5 animate-spin" aria-hidden />
+            ) : (
+              <ArrowRight className="size-4 ml-1.5" />
+            )}
+            <span>{isSubmitting ? "Submitting…" : "Submit Test for AI Evaluation"}</span>
           </Button>
         </div>
       </main>

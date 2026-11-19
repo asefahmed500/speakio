@@ -142,8 +142,8 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
     <div className="relative min-h-0 bg-background text-foreground">
       {/* Ambient Lighting Orbs */}
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden>
-        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-cyan-500/10 blur-[130px]" />
-        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-indigo-500/10 blur-[150px]" />
+        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-primary/5 blur-[130px]" />
+        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-primary/5 blur-[150px]" />
         <div
           className="absolute inset-0 opacity-[0.025]"
           style={{
@@ -153,16 +153,16 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
         />
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-8">
+      <div className="w-full mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-8">
         {/* Skill Hero Card */}
-        <div className="relative overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-[#16213A]/80 via-[#10192B]/90 to-[#0B0E14] p-6 sm:p-8 backdrop-blur-2xl shadow-2xl space-y-6">
+        <div className="relative overflow-hidden rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-2xl shadow-2xl space-y-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="flex items-start gap-4">
-              <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/40 bg-cyan-950/40 text-cyan-300">
+              <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-foreground">
                 <Icon className="size-7" />
               </div>
               <div className="space-y-1">
-                <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-0.5 text-[10px] font-mono tracking-widest text-cyan-300 uppercase">
+                <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-0.5 text-[10px] font-mono tracking-widest text-muted-foreground uppercase">
                   <span>IELTS OFFICIAL MODULE</span>
                   <span className="text-muted-foreground">·</span>
                   <span>{skill}</span>
@@ -207,8 +207,8 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
           </div>
 
           {config.note && (
-            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-200/90 flex items-center gap-2.5">
-              <Sparkles className="size-4 shrink-0 text-cyan-400" />
+            <div className="rounded-xl border border-border bg-muted px-4 py-3 text-xs text-foreground flex items-center gap-2.5">
+              <Sparkles className="size-4 shrink-0 text-muted-foreground" />
               <span>{config.note}</span>
             </div>
           )}
@@ -226,13 +226,13 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
         {/* Error State */}
         {!loading && error && (
           <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-6 text-center space-y-4">
-            <AlertCircle className="size-8 text-red-400 mx-auto" aria-hidden />
-            <p className="text-sm text-red-200/80">{error}</p>
+            <AlertCircle className="size-8 text-red-700 mx-auto" aria-hidden />
+            <p className="text-sm text-red-700">{error}</p>
             <Button
               variant="outline"
               size="sm"
               onClick={retryFetch}
-              className="border-border bg-card text-foreground hover:bg-white/20"
+              className="border-border bg-card text-foreground hover:bg-muted"
             >
               Retry Loading Tests
             </Button>
@@ -242,7 +242,7 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
         {/* Empty State */}
         {!loading && !error && tests && tests.length === 0 && (
           <div className="rounded-3xl border border-border bg-surface-subtle p-8 text-center space-y-3">
-            <ShieldCheck className="size-8 text-cyan-400 mx-auto" />
+            <ShieldCheck className="size-8 text-muted-foreground mx-auto" />
             <h2 className="text-base font-semibold text-foreground">No Practice Sets Available</h2>
             <p className="text-xs text-muted-foreground">
               New {config.title.toLowerCase()} materials are being synchronized. Please check back shortly.
@@ -265,11 +265,11 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
               {tests.map((test) => (
                 <div
                   key={test.id}
-                  className="group relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 overflow-hidden rounded-2xl border border-border bg-gradient-to-r from-white/[0.03] to-white/[0.01] p-5 backdrop-blur-xl transition-all hover:border-cyan-400/40 hover:bg-surface-subtle hover:shadow-lg hover:shadow-cyan-500/5"
+                  className="group relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 overflow-hidden rounded-2xl border border-border bg-card p-5 backdrop-blur-xl transition-all hover:border-primary/40 hover:bg-surface-subtle hover:shadow-lg hover:shadow-cyan-500/5"
                 >
                   <div className="space-y-1.5 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-mono text-cyan-300">
+                      <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
                         {test.moduleType}
                       </span>
                       <span className="text-xs font-mono text-muted-foreground">·</span>
@@ -282,7 +282,7 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
                       </span>
                     </div>
 
-                    <h3 className="text-base font-medium text-foreground group-hover:text-cyan-300 transition-colors truncate">
+                    <h3 className="text-base font-medium text-foreground group-hover:text-muted-foreground transition-colors truncate">
                       {test.title}
                     </h3>
                   </div>

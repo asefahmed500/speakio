@@ -1,47 +1,45 @@
-# Speakio deployment - one command after any reboot:
+# Speakio production deployment - one command:
 #   powershell -File .\deploy.ps1
-# Restores: backend API (local node), public tunnel URL, frontend Worker redeploy.
+# Architecture: NestJS API on Vercel (Prisma cloud Postgres), Cloudflare for
+# the frontend Worker + the speakio-api reverse-proxy Worker. The tunnel and
+# the local node process are no longer part of production.
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 Set-Location $root
 
-Write-Host "== 1/4 Backend API ==" -ForegroundColor Cyan
-$back = Get-NetTCPConnection -LocalPort 4040 -State Listen -ErrorAction SilentlyContinue
-if (-not $back) {
-  Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd backend && node dist/src/main.js > .srv-out.log 2> .srv-err.log" -WorkingDirectory $root -WindowStyle Hidden
-  $ok = $false
-  foreach ($i in 1..15) { Start-Sleep -Seconds 3; try { Invoke-RestMethod "http://localhost:4040/health" -TimeoutSec 3 | Out-Null; $ok = $true; break } catch {} }
-  if (-not $ok) { throw "Backend failed to start - see backend\.srv-err.log" }
-}
-Write-Host "   backend OK on :4040" -ForegroundColor Green
+Write-Host "== 1/4 Backend to Vercel ==" -ForegroundColor Cyan
+Push-Location (Join-Path $root "backend")
+try {
+  cmd /c "vercel --prod --yes > ..\.deploy\vercel-deploy.log 2>&1"
+  if ($LASTEXITCODE -ne 0) { throw "Vercel deploy failed - see .deploy\vercel-deploy.log" }
+} finally { Pop-Location }
 
-Write-Host "== 2/4 Public tunnel ==" -ForegroundColor Cyan
-$cf = Get-Process cloudflared -ErrorAction SilentlyContinue
-if ($cf) { Stop-Process -Id $cf.Id -Force; Start-Sleep -Seconds 2 }
-Start-Process -FilePath "$root\.deploy\cloudflared.exe" -ArgumentList "tunnel", "--url", "http://localhost:4040", "--no-autoupdate" -WindowStyle Hidden -RedirectStandardOutput "$root\.deploy\tunnel-out.log" -RedirectStandardError "$root\.deploy\tunnel-err.log"
-Start-Sleep -Seconds 10
 $api = $null
-foreach ($i in 1..10) {
-  Start-Sleep -Seconds 3
-  $m = Select-String -Path "$root\.deploy\tunnel-err.log" -Pattern "https://[a-z-]+\.trycloudflare\.com" | Select-Object -Last 1
-  if ($m) { $api = $m.Matches[0].Value; break }
-}
-if (-not $api) { throw "Tunnel URL not found - see .deploy\tunnel-err.log" }
-$health = $null
-foreach ($i in 1..6) {
+foreach ($i in 1..5) {
   Start-Sleep -Seconds 5
-  $health = try { (Invoke-RestMethod "$api/health" -TimeoutSec 30).status } catch { $null }
-  if ($health -eq "ok") { break }
+  try {
+    $r = Invoke-RestMethod "https://speakio-api.vercel.app/health" -TimeoutSec 20
+    if ($r.status -eq "ok") { $api = "https://speakio-api.vercel.app"; break }
+  } catch {}
 }
-if ($health -ne "ok") { throw "Tunnel is up but origin is unreachable" }
+if (-not $api) { throw "Vercel backend is not healthy yet - check .deploy\vercel-deploy.log" }
 Write-Host "   API URL: $api" -ForegroundColor Green
 
-Write-Host "== 3/4 Frontend build (API URL baked in) ==" -ForegroundColor Cyan
-# Same-origin API path: the frontend Worker proxies /api/* to the API Worker.
-# This keeps auth cookies on the frontend host (workers.dev is a public suffix,
-# so a shared Domain cookie across speakio-web/speakio-api is impossible).
+Write-Host "== 2/4 API Worker repoint ==" -ForegroundColor Cyan
+$enc = New-Object System.Text.UTF8Encoding($false)
+$apiCfg = Join-Path $root "api-proxy\wrangler.jsonc"
+$cfgText = [IO.File]::ReadAllText($apiCfg)
+$cfgText = [regex]::Replace($cfgText, '"API_ORIGIN":\s*"[^"]+"', '"API_ORIGIN": "' + $api + '"')
+[IO.File]::WriteAllText($apiCfg, $cfgText, $enc)
+Push-Location (Join-Path $root "api-proxy")
+try {
+  cmd /c "npx wrangler deploy > ..\.deploy\apideploy.log 2>&1"
+  if ($LASTEXITCODE -ne 0) { throw "API Worker deploy failed - see .deploy\apideploy.log" }
+} finally { Pop-Location }
+Write-Host "   API Worker redeployed" -ForegroundColor Green
+
+Write-Host "== 3/4 Frontend build (same-origin /api baked in) ==" -ForegroundColor Cyan
 cmd /c "set NEXT_PUBLIC_API_URL=https://speakio-web.speakio.workers.dev/api&& npm run cf:build > .deploy\cfbuild.log 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "OpenNext build failed - see .deploy\cfbuild.log" }
 Write-Host "   build OK" -ForegroundColor Green
@@ -50,7 +48,14 @@ Write-Host "== 4/4 Deploy to Cloudflare Workers ==" -ForegroundColor Cyan
 cmd /c "npx wrangler deploy > .deploy\cfdeploy.log 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "wrangler deploy failed - see .deploy\cfdeploy.log" }
 Get-Content "$root\.deploy\cfdeploy.log" | Select-String "workers.dev|Deployed" | ForEach-Object { Write-Host "   $_" -ForegroundColor Green }
+
 Write-Host ""
-Write-Host "DEPLOYED. Frontend: https://speakio-web.speakio.workers.dev" -ForegroundColor Cyan
-Write-Host "NOTE: the tunnel URL changes on every reboot - rerun this script whenever the machine restarts." -ForegroundColor Yellow
-Write-Host "Stable production path: add a domain to Cloudflare -> named tunnel (or Workers paid + Containers + Neon DB)." -ForegroundColor Yellow
+Write-Host "Verifying live endpoints..." -ForegroundColor Cyan
+foreach ($u in @("https://speakio-api.speakio.workers.dev/health", "https://speakio-web.speakio.workers.dev/login")) {
+  try {
+    $r = Invoke-WebRequest $u -UseBasicParsing -TimeoutSec 20
+    Write-Host "   $u -> $($r.StatusCode)" -ForegroundColor Green
+  } catch {
+    Write-Host "   $u -> FAIL" -ForegroundColor Red
+  }
+}

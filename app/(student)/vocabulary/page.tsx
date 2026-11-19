@@ -196,9 +196,9 @@ export default function VocabularyPage() {
   return (
     <div className="flex-1 bg-background text-foreground min-h-0 relative overflow-hidden">
       {/* Background ambient glow */}
-      <div className="pointer-events-none absolute -top-40 left-1/3 h-96 w-96 rounded-full bg-emerald-500/10 blur-[130px]" />
-      <div className="pointer-events-none absolute top-1/2 -right-20 h-96 w-96 rounded-full bg-cyan-500/10 blur-[140px]" />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
+      <div className="pointer-events-none absolute -top-40 left-1/3 h-96 w-96 rounded-full bg-muted blur-[130px]" />
+      <div className="pointer-events-none absolute top-1/2 -right-20 h-96 w-96 rounded-full bg-primary/5 blur-[140px]" />
+      <div className="w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Vocabulary</h1>
@@ -246,7 +246,7 @@ export default function VocabularyPage() {
                 aria-pressed={topic === t}
                 className={`shrink-0 rounded-none border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
                   topic === t
-                    ? "border-primary bg-primary text-foreground"
+                    ? "border-primary bg-primary text-primary-foreground"
                     : "border-border bg-card text-muted-foreground hover:text-foreground"
                 }`}
               >
@@ -490,7 +490,7 @@ export default function VocabularyPage() {
                   className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   {["noun", "verb", "adjective", "adverb", "collocation", "idiom"].map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                    <option key={p} value={p} className="bg-card text-foreground">{p}</option>
                   ))}
                 </select>
               </div>
@@ -503,7 +503,7 @@ export default function VocabularyPage() {
                   className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   {TOPICS.filter((t) => t !== "ALL").map((t) => (
-                    <option key={t} value={t}>{t}</option>
+                    <option key={t} value={t} className="bg-card text-foreground">{t}</option>
                   ))}
                 </select>
               </div>
@@ -516,7 +516,7 @@ export default function VocabularyPage() {
                   className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   {[6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0].map((b) => (
-                    <option key={b} value={b}>{b.toFixed(1)}</option>
+                    <option key={b} value={b} className="bg-card text-foreground">{b.toFixed(1)}</option>
                   ))}
                 </select>
               </div>

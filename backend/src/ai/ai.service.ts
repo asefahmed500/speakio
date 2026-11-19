@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ZaiProvider, ChatMessage, GenerateResult } from './zai.provider';
 import { ModelRouterService, AiTaskType } from './model-router.service';
 import { invokeWithBackoff } from '../common/free-tier-backoff';
@@ -121,7 +121,36 @@ export class AiService {
     throw new Error(`Execution failed after retries for task ${taskType}`);
   }
 
+  /** Hard ceiling for AI work awaited by an HTTP request (edge limit = 100 s). */
+  private static readonly HTTP_DEADLINE_MS = 95_000;
+
   async executeStructuredTask<T>(
+    options: StructuredGenerateOptions<T>,
+  ): Promise<{ data: T; result: GenerateResult }> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // The internal retry ladder (model chain -> transient backoff -> parse
+    // retries) can multiply one 90 s call into several minutes. Bound the
+    // whole operation so an awaited HTTP request always fails fast and
+    // honestly instead of hitting the edge timeout as a bare 524/500.
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new ServiceUnavailableException(
+              `The AI service is taking too long to respond for ${options.taskType}. Please try again shortly.`,
+            ),
+          ),
+        AiService.HTTP_DEADLINE_MS,
+      );
+    });
+    try {
+      return await Promise.race([this.runStructuredTask(options), deadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private async runStructuredTask<T>(
     options: StructuredGenerateOptions<T>,
   ): Promise<{ data: T; result: GenerateResult }> {
     const baseMessages: ChatMessage[] = [

@@ -250,7 +250,7 @@ export default function QuestionBankPage() {
 
   return (
     <div className="flex-1 bg-surface-subtle">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
+      <div className="w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Question Bank</h1>
@@ -289,7 +289,7 @@ export default function QuestionBankPage() {
               className="h-10 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring"
             >
               {SKILLS.map((s) => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s} value={s} className="bg-card text-foreground">{s}</option>
               ))}
             </select>
             <Input
@@ -443,10 +443,10 @@ export default function QuestionBankPage() {
                                 onChange={(e) => setNewType(e.target.value as typeof newType)}
                                 className="h-10 rounded-lg border border-input bg-transparent px-2.5 text-sm"
                               >
-                                <option value="MCQ">MCQ</option>
-                                <option value="COMPLETION">Completion</option>
-                                <option value="ESSAY">Essay</option>
-                                <option value="SPEAKING_PROMPT">Speaking prompt</option>
+                                <option value="MCQ" className="bg-card text-foreground">MCQ</option>
+                                <option value="COMPLETION" className="bg-card text-foreground">Completion</option>
+                                <option value="ESSAY" className="bg-card text-foreground">Essay</option>
+                                <option value="SPEAKING_PROMPT" className="bg-card text-foreground">Speaking prompt</option>
                               </select>
                             </div>
                             <Textarea

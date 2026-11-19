@@ -106,7 +106,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex-1 bg-background text-foreground min-h-0">
-      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-8 space-y-6">
+      <div className="mx-auto w-full px-4 sm:px-6 py-8 space-y-6">
         {/* Simple Clean Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-5">
           <div>
@@ -134,7 +134,7 @@ export default function DashboardPage() {
         </div>
 
         {error && (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 flex items-center justify-between text-xs text-rose-300">
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 flex items-center justify-between text-xs text-red-600">
             <span className="flex items-center gap-2">
               <AlertCircle className="size-4 shrink-0" />
               {error}
@@ -157,7 +157,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-xl border border-border bg-surface-subtle p-4 text-center">
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Overall Band</p>
-            <p className="text-2xl font-bold font-mono text-emerald-400 mt-1">
+            <p className="text-2xl font-bold font-mono text-emerald-700 mt-1">
               {stats?.overallBand && stats.overallBand > 0 ? stats.overallBand.toFixed(1) : "—"}
             </p>
           </div>
@@ -169,7 +169,7 @@ export default function DashboardPage() {
           </div>
           <div className="rounded-xl border border-border bg-surface-subtle p-4 text-center">
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Target Goal</p>
-            <p className="text-2xl font-bold font-mono text-sky-400 mt-1">
+            <p className="text-2xl font-bold font-mono text-sky-700 mt-1">
               {targetBand.toFixed(1)}
             </p>
           </div>
@@ -247,7 +247,7 @@ export default function DashboardPage() {
                     <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded border border-border text-muted-foreground">
                       {attempt.status}
                     </span>
-                    <span className="font-mono font-semibold text-emerald-400">
+                    <span className="font-mono font-semibold text-emerald-700">
                       {attempt.bandScore != null ? attempt.bandScore.toFixed(1) : "—"}
                     </span>
                   </div>

@@ -66,7 +66,9 @@ export class OpenTdbQuestionGenerator implements QuestionGenerator {
   }
 
   private async requestSessionToken(): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/api_token.php?command=request`);
+    const res = await fetch(`${this.baseUrl}/api_token.php?command=request`, {
+      signal: AbortSignal.timeout(30_000),
+    });
     if (!res.ok) {
       throw new ServiceUnavailableException(
         `Question provider rejected the token request (HTTP ${res.status})`,
@@ -101,6 +103,7 @@ export class OpenTdbQuestionGenerator implements QuestionGenerator {
     if (this.token) {
       await fetch(
         `${this.baseUrl}/api_token.php?command=reset&token=${this.token.value}`,
+        { signal: AbortSignal.timeout(15_000) },
       ).catch(() => {});
     }
     this.token = null;
@@ -172,7 +175,9 @@ export class OpenTdbQuestionGenerator implements QuestionGenerator {
   ): Promise<{ response_code: number; results?: OpenTdbResult[] }> {
     // Provider rate limit: 1 request / 5s per IP — retry once after a pause on failure.
     const doFetch = async () => {
-      const res = await fetch(`${this.baseUrl}/api.php?${query}`);
+      const res = await fetch(`${this.baseUrl}/api.php?${query}`, {
+        signal: AbortSignal.timeout(30_000),
+      });
       if (!res.ok) {
         // A 429/500 with an HTML body would make res.json() throw and escape
         // as a raw TypeError; surface it as a proper 503 instead.
@@ -195,7 +200,17 @@ export class OpenTdbQuestionGenerator implements QuestionGenerator {
         'Question provider call failed — retrying once after rate-limit pause',
       );
       await new Promise((r) => setTimeout(r, 5_500));
-      return doFetch();
+      try {
+        return await doFetch();
+      } catch (retryError) {
+        // A timeout / dropped connection on the final attempt is a provider
+        // outage — surface a clean 503, never a raw 500.
+        const message =
+          retryError instanceof Error ? retryError.message : String(retryError);
+        throw new ServiceUnavailableException(
+          `The question provider did not respond in time (${message}). Try again shortly.`,
+        );
+      }
     }
   }
 }

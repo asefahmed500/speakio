@@ -42,7 +42,7 @@ export default function OverviewPage() {
 
   return (
     <div className="flex-1 bg-surface-subtle">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
+      <div className="w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
         <div>
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Platform Overview</h1>
           <p className="text-sm text-muted-foreground mt-1">

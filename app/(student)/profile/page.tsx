@@ -115,8 +115,8 @@ export default function ProfilePage() {
   return (
     <div className="relative min-h-0 bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden>
-        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-cyan-500/10 blur-[130px]" />
-        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-indigo-500/10 blur-[150px]" />
+        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-primary/5 blur-[130px]" />
+        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-primary/5 blur-[150px]" />
         <div
           className="absolute inset-0 opacity-[0.025]"
           style={{
@@ -126,23 +126,23 @@ export default function ProfilePage() {
         />
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-6">
+      <div className="w-full mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-6">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1 text-[11px] font-mono tracking-widest text-cyan-300 uppercase">
-            <ShieldCheck className="size-3.5 text-cyan-400" />
+          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1 text-[11px] font-mono tracking-widest text-muted-foreground uppercase">
+            <ShieldCheck className="size-3.5 text-muted-foreground" />
             <span>Candidate Credentials</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground mt-2">
             Profile &amp; Security
           </h1>
           <p className="text-xs text-muted-foreground mt-1">
-            {user.email} · Role: <span className="font-mono text-cyan-300">{user.role}</span>
+            {user.email} · Role: <span className="font-mono text-muted-foreground">{user.role}</span>
           </p>
         </div>
 
         <section className="rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl space-y-4">
           <div className="flex items-center gap-2 border-b border-border pb-3">
-            <UserCog className="size-4 text-cyan-400" />
+            <UserCog className="size-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Candidate Details</h2>
           </div>
 
@@ -158,7 +158,7 @@ export default function ProfilePage() {
                   className="h-10 rounded-xl border-border bg-surface-subtle text-xs text-foreground"
                 />
                 {profile.formState.errors.name && (
-                  <p role="alert" className="text-[11px] text-rose-300">
+                  <p role="alert" className="text-[11px] text-red-600">
                     {profile.formState.errors.name.message}
                   </p>
                 )}
@@ -170,16 +170,16 @@ export default function ProfilePage() {
                 <select
                   id="pr-band"
                   {...profile.register("targetBand", { valueAsNumber: true })}
-                  className="h-10 w-full rounded-xl border border-border bg-surface-subtle px-3 text-xs text-foreground outline-none focus:border-cyan-400"
+                  className="h-10 w-full rounded-xl border border-border bg-surface-subtle px-3 text-xs text-foreground outline-none focus:border-primary"
                 >
                   {BANDS.map((b) => (
-                    <option key={b} value={b} className="bg-[#121927] text-foreground">
+                    <option key={b} value={b} className="bg-card text-foreground">
                       Band {b.toFixed(1)}
                     </option>
                   ))}
                 </select>
                 {profile.formState.errors.targetBand && (
-                  <p role="alert" className="text-[11px] text-rose-300">
+                  <p role="alert" className="text-[11px] text-red-600">
                     {profile.formState.errors.targetBand.message}
                   </p>
                 )}
@@ -187,7 +187,7 @@ export default function ProfilePage() {
             </div>
 
             {profileError && (
-              <p role="alert" className="text-xs text-rose-300 flex items-center gap-1.5">
+              <p role="alert" className="text-xs text-red-600 flex items-center gap-1.5">
                 <AlertCircle className="size-3.5" /> {profileError}
               </p>
             )}
@@ -203,7 +203,7 @@ export default function ProfilePage() {
                 Save Profile
               </Button>
               {profileSaved && (
-                <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-400 font-mono">
+                <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-700 font-mono">
                   <CheckCircle2 className="size-3.5" /> Saved
                 </span>
               )}
@@ -213,7 +213,7 @@ export default function ProfilePage() {
 
         <section className="rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl space-y-4">
           <div className="flex items-center gap-2 border-b border-border pb-3">
-            <KeyRound className="size-4 text-cyan-400" />
+            <KeyRound className="size-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold text-foreground">Security &amp; Password</h2>
           </div>
 
@@ -234,7 +234,7 @@ export default function ProfilePage() {
                 className="h-10 rounded-xl border-border bg-surface-subtle text-xs text-foreground"
               />
               {password.formState.errors.currentPassword && (
-                <p role="alert" className="text-[11px] text-rose-300">
+                <p role="alert" className="text-[11px] text-red-600">
                   {password.formState.errors.currentPassword.message}
                 </p>
               )}
@@ -252,7 +252,7 @@ export default function ProfilePage() {
                   className="h-10 rounded-xl border-border bg-surface-subtle text-xs text-foreground"
                 />
                 {password.formState.errors.newPassword && (
-                  <p role="alert" className="text-[11px] text-rose-300">
+                  <p role="alert" className="text-[11px] text-red-600">
                     {password.formState.errors.newPassword.message}
                   </p>
                 )}
@@ -269,7 +269,7 @@ export default function ProfilePage() {
                   className="h-10 rounded-xl border-border bg-surface-subtle text-xs text-foreground"
                 />
                 {password.formState.errors.confirmPassword && (
-                  <p role="alert" className="text-[11px] text-rose-300">
+                  <p role="alert" className="text-[11px] text-red-600">
                     {password.formState.errors.confirmPassword.message}
                   </p>
                 )}
@@ -277,7 +277,7 @@ export default function ProfilePage() {
             </div>
 
             {passwordError && (
-              <p role="alert" className="text-xs text-rose-300 flex items-center gap-1.5">
+              <p role="alert" className="text-xs text-red-600 flex items-center gap-1.5">
                 <AlertCircle className="size-3.5" /> {passwordError}
               </p>
             )}
@@ -293,7 +293,7 @@ export default function ProfilePage() {
                 Update Password
               </Button>
               {passwordSaved && (
-                <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-400 font-mono">
+                <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-700 font-mono">
                   <CheckCircle2 className="size-3.5" /> Password updated
                 </span>
               )}

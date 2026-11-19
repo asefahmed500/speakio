@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
@@ -19,7 +18,10 @@ import { AppService } from './app.service';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    // .env loading for local dev happens via dotenv in main.ts / api/index.ts.
+    // @nestjs/config was removed: v12 is ESM-only and cannot be require()d
+    // from this CJS build on older Node runtimes. On Vercel, env vars are
+    // injected by the platform, so no loader is needed there at all.
     ThrottlerModule.forRoot([
       {
         name: 'default',

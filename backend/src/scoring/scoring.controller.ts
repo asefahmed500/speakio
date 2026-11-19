@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { withHttpDeadline } from '../common/http-deadline';
 import { isValidBand } from '../common/band.utils';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 
@@ -111,15 +112,21 @@ export class ScoringController {
         ? 'TASK_1'
         : 'TASK_2';
 
-    return this.writingAgent.scoreEssay({
-      attemptId: body.attemptId,
-      questionPrompt: writingQuestion.passage
-        ? `${writingQuestion.prompt}\n\nDATA SUMMARY: ${writingQuestion.passage}`
-        : writingQuestion.prompt,
-      taskType,
-      studentEssay: body.studentEssay,
-      userContext: { userId: req.user.sub, role: req.user.role },
-    });
+    // The agent can run two full LLM passes and retries, far longer than the
+    // edge limit. Bound the awaited HTTP work so a slow provider yields a 503
+    // instead of a 524; scoring itself continues and publishes in background.
+    return withHttpDeadline(
+      this.writingAgent.scoreEssay({
+        attemptId: body.attemptId,
+        questionPrompt: writingQuestion.passage
+          ? `${writingQuestion.prompt}\n\nDATA SUMMARY: ${writingQuestion.passage}`
+          : writingQuestion.prompt,
+        taskType,
+        studentEssay: body.studentEssay,
+        userContext: { userId: req.user.sub, role: req.user.role },
+      }),
+      'writing scoring',
+    );
   }
 
   @Get('runs')
@@ -224,18 +231,21 @@ export class ScoringController {
     const metadata =
       (writingQuestion.metadata as Record<string, unknown>) ?? {};
 
-    const result = await this.writingAgent.scoreEssay({
-      attemptId: attempt.id,
-      questionPrompt: writingQuestion.passage
-        ? `${writingQuestion.prompt}\n\nDATA SUMMARY: ${writingQuestion.passage}`
-        : writingQuestion.prompt,
-      taskType:
-        metadata.taskType === 'TASK_1' || writingQuestion.partNumber === 1
-          ? 'TASK_1'
-          : 'TASK_2',
-      studentEssay: essayEntry,
-      userContext: { userId: req.user.sub, role: req.user.role },
-    });
+    const result = await withHttpDeadline(
+      this.writingAgent.scoreEssay({
+        attemptId: attempt.id,
+        questionPrompt: writingQuestion.passage
+          ? `${writingQuestion.prompt}\n\nDATA SUMMARY: ${writingQuestion.passage}`
+          : writingQuestion.prompt,
+        taskType:
+          metadata.taskType === 'TASK_1' || writingQuestion.partNumber === 1
+            ? 'TASK_1'
+            : 'TASK_2',
+        studentEssay: essayEntry,
+        userContext: { userId: req.user.sub, role: req.user.role },
+      }),
+      'run retry',
+    );
     return { retriedFrom: run.id, ...result };
   }
 
@@ -340,7 +350,9 @@ export class ScoringController {
         },
       });
 
-      await tx.attempt.update({
+      // updateMany (not update): an unexpected IN_PROGRESS attempt must not
+      // throw P2025 and roll back the whole override — skip it harmlessly.
+      await tx.attempt.updateMany({
         where: { id: item.attemptId, status: { not: 'IN_PROGRESS' } },
         data: { status: 'COMPLETED' },
       });

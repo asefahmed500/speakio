@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TestsService, QUESTIONS_PER_ATTEMPT } from './tests.service';
+import { getAiToken } from '../common/ai-token';
 import type { GeneratableSkill } from './ai-question-generator.service';
 
 /** Pool ceilings per skill — content-heavy skills keep bigger banks. */
@@ -43,7 +44,8 @@ export class PoolAutomationService {
   }
 
   private async run(testSetId: string): Promise<void> {
-    if (!process.env.ZAI_API_KEY) return; // AI disabled — seeded pools only
+    // Resolve the live (rotating) credential, not a possibly stale .env copy.
+    if (!getAiToken()) return; // AI disabled — seeded pools only
     if (this.inFlight.has(testSetId)) return;
 
     const lastTime = this.lastTopUpAt.get(testSetId);

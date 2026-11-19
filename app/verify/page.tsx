@@ -40,7 +40,7 @@ export default function VerifyLookupPage() {
               placeholder="SPK-2026-0000-000"
               {...register("code")}
               aria-invalid={Boolean(errors.code)}
-              className="mt-1 h-10 border-black/10 bg-white font-mono text-sm text-[#111111] placeholder:text-neutral-400"
+              className="mt-1 h-10 border-black/10 bg-white font-mono text-sm text-[#111111] placeholder:text-muted-foreground"
             />
             {errors.code && <p className="mt-1 text-[11px] text-neutral-600">{errors.code.message}</p>}
           </div>
@@ -53,7 +53,7 @@ export default function VerifyLookupPage() {
           </Button>
         </form>
 
-        <p className="border-t border-black/5 pt-4 text-center text-[11px] text-neutral-400">
+        <p className="border-t border-black/5 pt-4 text-center text-[11px] text-muted-foreground">
           No sign-in required.
         </p>
       </div>

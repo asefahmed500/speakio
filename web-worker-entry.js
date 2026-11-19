@@ -21,6 +21,20 @@ export {
 
 const API_ORIGIN = 'https://speakio-api.speakio.workers.dev';
 
+/** Baseline security headers for user-facing HTML (the backend already sets
+ *  these on API responses via helmet). */
+function withSecurityHeaders(response, request) {
+  const out = new Response(response.body, response);
+  out.headers.set('x-content-type-options', 'nosniff');
+  out.headers.set('referrer-policy', 'strict-origin-when-cross-origin');
+  out.headers.set('x-frame-options', 'SAMEORIGIN');
+  out.headers.set('permissions-policy', 'camera=(self), microphone=(self), geolocation=()');
+  if (new URL(request.url).protocol === 'https:') {
+    out.headers.set('strict-transport-security', 'max-age=31536000; includeSubDomains');
+  }
+  return out;
+}
+
 const worker = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -42,7 +56,9 @@ const worker = {
 
       try {
         const response = await fetch(upstream, {
-          signal: AbortSignal.timeout(240_000),
+          // Cloudflare caps origin waits at ~100s; a longer signal only ties
+          // up subrequest slots. AI calls legitimately take up to ~60s.
+          signal: AbortSignal.timeout(95_000),
         });
         // Pass Set-Cookie + status through unchanged: the browser stores the
         // cookie for speakio-web.speakio.workers.dev (same origin as the page).
@@ -55,7 +71,7 @@ const worker = {
       }
     }
 
-    return openNext.fetch(request, env, ctx);
+    return withSecurityHeaders(await openNext.fetch(request, env, ctx), request);
   },
 };
 

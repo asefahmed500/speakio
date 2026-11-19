@@ -35,11 +35,21 @@ export function getAiToken(): string {
 /** Ask wrangler to refresh its OAuth token, then return the fresh value. */
 export function refreshAiToken(): string {
   try {
-    execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['wrangler', 'whoami'], {
-      cwd: process.cwd(),
-      stdio: 'ignore',
-      timeout: 45_000,
-    });
+    // .cmd shims need a shell on Windows; execFileSync cannot spawn them
+    // directly (EINVAL), which previously left the stale token in place.
+    if (process.platform === 'win32') {
+      execFileSync('cmd.exe', ['/c', 'npx wrangler whoami'], {
+        cwd: process.cwd(),
+        stdio: 'ignore',
+        timeout: 45_000,
+      });
+    } else {
+      execFileSync('npx', ['wrangler', 'whoami'], {
+        cwd: process.cwd(),
+        stdio: 'ignore',
+        timeout: 45_000,
+      });
+    }
   } catch {
     // Refresh is best-effort; the caller will surface the original error.
   }

@@ -160,7 +160,7 @@ export default function ResultPage() {
     return (
       <div className="flex min-h-0 flex-col items-center justify-center bg-background text-foreground p-4">
         <div className="text-center space-y-4">
-          <Loader2 className="size-8 animate-spin text-cyan-400 mx-auto" aria-hidden />
+          <Loader2 className="size-8 animate-spin text-muted-foreground mx-auto" aria-hidden />
           <p className="text-sm text-muted-foreground">Retrieving official diagnostic result…</p>
         </div>
       </div>
@@ -193,9 +193,9 @@ export default function ResultPage() {
     return (
       <div className="flex min-h-0 flex-col items-center justify-center bg-background text-foreground p-6">
         <div className="max-w-md text-center space-y-4">
-          <AlertCircle className="size-10 text-red-400 mx-auto" aria-hidden />
+          <AlertCircle className="size-10 text-red-700 mx-auto" aria-hidden />
           <h1 className="text-xl font-semibold text-foreground">Something Went Wrong</h1>
-          <p className="text-sm text-red-200/80">{error ?? "An unexpected error occurred."}</p>
+          <p className="text-sm text-red-700">{error ?? "An unexpected error occurred."}</p>
           <Button onClick={retryFetch} className="rounded-xl bg-white text-black hover:bg-neutral-200">
             Retry Connection
           </Button>
@@ -216,8 +216,8 @@ export default function ResultPage() {
     <div className="relative min-h-0 bg-background text-foreground pb-16">
       {/* Ambient Lighting Orbs */}
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden>
-        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-cyan-500/10 blur-[130px]" />
-        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-indigo-500/10 blur-[150px]" />
+        <div className="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-primary/5 blur-[130px]" />
+        <div className="absolute top-1/3 -right-32 h-[480px] w-[480px] rounded-full bg-primary/5 blur-[150px]" />
         <div
           className="absolute inset-0 opacity-[0.025]"
           style={{
@@ -227,7 +227,7 @@ export default function ResultPage() {
         />
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+      <div className="w-full mx-auto px-4 sm:px-6 py-8 space-y-6">
         {/* Top Breadcrumb */}
         <div className="flex items-center justify-between gap-3">
           <Link
@@ -245,8 +245,8 @@ export default function ResultPage() {
 
         {/* Evaluation In-Flight States */}
         {result.status === "SCORING" && (
-          <div className="rounded-3xl border border-cyan-400/30 bg-gradient-to-r from-cyan-950/40 to-blue-950/30 p-6 backdrop-blur-xl flex items-start gap-4">
-            <Loader2 className="size-6 animate-spin text-cyan-400 shrink-0 mt-0.5" />
+          <div className="rounded-3xl border border-primary/30 bg-muted p-6 backdrop-blur-xl flex items-start gap-4">
+            <Loader2 className="size-6 animate-spin text-muted-foreground shrink-0 mt-0.5" />
             <div className="space-y-1">
               <h2 className="text-base font-semibold text-foreground">AI Examiner Evaluation in Progress</h2>
               <p className="text-xs text-muted-foreground leading-relaxed">
@@ -260,17 +260,17 @@ export default function ResultPage() {
         {result.status === "SUBMITTED" && (
           <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 backdrop-blur-xl space-y-4">
             <div className="flex items-start gap-3.5">
-              <Clock className="size-6 text-amber-400 shrink-0 mt-0.5" />
+              <Clock className="size-6 text-amber-700 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <h2 className="text-base font-semibold text-foreground">Submission Stored — Ready for Scoring</h2>
-                <p className="text-xs text-amber-200/80">
+                <p className="text-xs text-amber-700">
                   Your exam answers are safely persisted. Trigger the AI examiner scoring engine below.
                 </p>
               </div>
             </div>
 
             {rescoreError && (
-              <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+              <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700">
                 {rescoreError}
               </p>
             )}
@@ -297,11 +297,11 @@ export default function ResultPage() {
         {result.status === "COMPLETED" && score && (
           <div className="space-y-6">
             {/* TRF Official Hero Card */}
-            <div className="relative overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-[#16213A]/80 via-[#10192B]/90 to-[#0B0E14] p-6 sm:p-8 backdrop-blur-2xl shadow-2xl space-y-6">
+            <div className="relative overflow-hidden rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-2xl shadow-2xl space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-border">
                 <div className="space-y-2">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1 text-[11px] font-mono tracking-widest text-cyan-300 uppercase">
-                    <ShieldCheck className="size-3.5 text-cyan-400" />
+                  <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1 text-[11px] font-mono tracking-widest text-muted-foreground uppercase">
+                    <ShieldCheck className="size-3.5 text-muted-foreground" />
                     <span>Official IELTS Diagnostic TRF</span>
                   </div>
                   <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
@@ -326,7 +326,7 @@ export default function ResultPage() {
                       {score.bandScore.toFixed(1)}
                     </span>
                   </div>
-                  <span className="text-xs font-mono text-cyan-300 mt-1">
+                  <span className="text-xs font-mono text-muted-foreground mt-1">
                     {getCefrLevel(score.bandScore)}
                   </span>
                 </div>
@@ -336,12 +336,12 @@ export default function ResultPage() {
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
                 <div className="flex flex-wrap items-center gap-2">
                   {score.scoredBy === "ADMIN_OVERRIDE" && (
-                    <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-0.5 text-[11px] font-mono text-emerald-300">
+                    <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-0.5 text-[11px] font-mono text-emerald-700">
                       VERIFIED BY SENIOR INSTRUCTOR
                     </span>
                   )}
                   {score.scoredBy === "AI_REVIEW_GLM" && (
-                    <span className="rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-0.5 text-[11px] font-mono text-cyan-300">
+                    <span className="rounded-full border border-primary/40 bg-muted px-3 py-0.5 text-[11px] font-mono text-muted-foreground">
                       DUAL-PASS LANGGRAPH AGENT REVIEW
                     </span>
                   )}
@@ -354,7 +354,7 @@ export default function ResultPage() {
 
                 <Link
                   href={`/skills/${result.testSet.skill.toLowerCase()}`}
-                  className="inline-flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-muted-foreground transition-colors"
                 >
                   <span>Practice this skill again</span>
                   <ArrowRight className="size-3.5" />
@@ -394,7 +394,7 @@ export default function ResultPage() {
 
                       <div className="h-2 w-full overflow-hidden rounded-full bg-card">
                         <div
-                          className="h-full bg-gradient-to-r from-cyan-400 to-indigo-400 transition-all duration-500"
+                          className="h-full bg-primary transition-all duration-500"
                           style={{ width: `${((c.value ?? 0) / 9) * 100}%` }}
                         />
                       </div>
@@ -441,7 +441,7 @@ export default function ResultPage() {
 
                       <div className="h-2 w-full overflow-hidden rounded-full bg-card">
                         <div
-                          className="h-full bg-gradient-to-r from-cyan-400 to-indigo-400 transition-all duration-500"
+                          className="h-full bg-primary transition-all duration-500"
                           style={{ width: `${((c.value ?? 0) / 9) * 100}%` }}
                         />
                       </div>
@@ -458,7 +458,7 @@ export default function ResultPage() {
             {/* Detailed Examiner Commentary */}
             {score.feedbackSummary && (
               <div className="rounded-3xl border border-border bg-surface-subtle p-6 sm:p-8 backdrop-blur-xl space-y-3">
-                <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-cyan-300">
+                <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-muted-foreground">
                   <Bot className="size-4" />
                   <span>AI Senior Examiner Commentary</span>
                 </div>
@@ -486,11 +486,11 @@ export default function ResultPage() {
                       className="rounded-2xl border border-border bg-surface-subtle p-4 space-y-2"
                     >
                       <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-rose-300 line-through">
+                        <span className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-red-600 line-through">
                           {c.originalText}
                         </span>
                         <span className="text-muted-foreground">→</span>
-                        <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-emerald-300 font-medium">
+                        <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-emerald-700 font-medium">
                           {c.correctedText}
                         </span>
                       </div>
@@ -528,14 +528,14 @@ export default function ResultPage() {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-xs sm:text-sm font-medium text-foreground">
-                            <span className="font-mono text-cyan-400 mr-2">{idx + 1}.</span>
+                            <span className="font-mono text-muted-foreground mr-2">{idx + 1}.</span>
                             {prompt || `Question ${idx + 1}`}
                           </p>
                           <span
                             className={`rounded-full px-2.5 py-0.5 text-[10px] font-mono uppercase tracking-wide border shrink-0 ${
                               q.correct
-                                ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
-                                : "border-rose-400/40 bg-rose-400/10 text-rose-300"
+                                ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-700"
+                                : "border-rose-400/40 bg-rose-400/10 text-red-600"
                             }`}
                           >
                             {q.correct ? "Correct" : "Incorrect"}
@@ -547,7 +547,7 @@ export default function ResultPage() {
                             Your Answer: <span className="font-mono text-foreground">{q.given || "(None)"}</span>
                           </p>
                           {!q.correct && q.expected && (
-                            <p className="text-emerald-300">
+                            <p className="text-emerald-700">
                               Correct Key: <span className="font-mono font-medium">{q.expected}</span>
                             </p>
                           )}
@@ -563,19 +563,19 @@ export default function ResultPage() {
             {result.answerText && (
               <details className="rounded-3xl border border-border bg-surface-subtle p-6 backdrop-blur-xl">
                 <summary className="text-sm font-semibold text-muted-foreground cursor-pointer flex items-center gap-2">
-                  <FileText className="size-4 text-cyan-400" />
+                  <FileText className="size-4 text-muted-foreground" />
                   <span>View Original Submission / Transcript</span>
                 </summary>
                 <div className="pt-4 border-t border-border mt-3">
                   {isSpeaking && writingFeedback?.transcript ? (
                     <div className="space-y-2">
-                      <p className="text-xs font-mono text-cyan-300">GLM-ASR RECOGNIZED TRANSCRIPT:</p>
-                      <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-line bg-black/20 p-4 rounded-xl border border-border">
+                      <p className="text-xs font-mono text-muted-foreground">GLM-ASR RECOGNIZED TRANSCRIPT:</p>
+                      <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-line bg-muted p-4 rounded-xl border border-border">
                         {writingFeedback.transcript}
                       </p>
                     </div>
                   ) : (
-                    <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-line bg-black/20 p-4 rounded-xl border border-border">
+                    <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-line bg-muted p-4 rounded-xl border border-border">
                       {result.answerText.startsWith("data:") ? "Audio recording captured." : result.answerText}
                     </p>
                   )}

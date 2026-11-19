@@ -32,7 +32,8 @@ export default {
 
     try {
       const response = await fetch(upstream, {
-        signal: AbortSignal.timeout(240_000),
+        // Cloudflare's edge cap is ~100s; 95s leaves a small safety margin.
+        signal: AbortSignal.timeout(95_000),
       });
       const out = new Response(response.body, response);
       // Preserve CORS headers emitted by the origin (credentials + allowlist).

@@ -14,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { isInfraFailure } from '../common/ai-error.utils';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 
 const paraphraseSchema = z.object({
@@ -58,7 +59,9 @@ export class AiController {
       }>({
         taskType: 'COACH_ADVISOR',
         responseFormat: { type: 'json_object' },
-        timeoutMs: 120_000,
+        // Stay under Cloudflare's 100 s edge limit: this call is awaited by
+        // the HTTP request, so a longer timeout would surface as a 524.
+        timeoutMs: 90_000,
         messages: [
           {
             role: 'system',
@@ -85,14 +88,10 @@ export class AiController {
         },
       })
       .catch((error: unknown) => {
-        // Provider outages / exhausted quota are infrastructure failures —
-        // surface them as 503, never a bare 500.
+        // Provider outages, rotating-token 401s and exhausted quota are
+        // infrastructure failures — surface them as 503, never a bare 500.
         const message = error instanceof Error ? error.message : String(error);
-        if (
-          /429|circuit open|rate ?limit|balance|timed? ?out|status code 5\d\d|api key|ZAI_/i.test(
-            message,
-          )
-        ) {
+        if (isInfraFailure(message)) {
           throw new ServiceUnavailableException(
             'The AI service is temporarily unavailable. Please try again shortly.',
           );
@@ -194,11 +193,7 @@ export class AiController {
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        if (
-          /429|circuit open|rate ?limit|balance|timed? ?out|status code 5\d\d|api key|ZAI_/i.test(
-            message,
-          )
-        ) {
+        if (isInfraFailure(message)) {
           throw new ServiceUnavailableException(
             'The AI coach is temporarily unavailable. Your preferences are saved — try generating again shortly.',
           );

@@ -383,11 +383,13 @@ export class AttemptsService implements OnModuleInit {
       data: { status: AttemptStatus.SCORING },
     });
 
-    // Run the AI pipeline in the background: under 10k concurrent users the
-    // HTTP request must never hold an LLM call open. The results page already
-    // polls while status is SCORING, and a background failure rolls the
-    // attempt back to SUBMITTED for the retry/rescore path.
-    void this.writingAgent
+    // Run the AI pipeline in the background on long-lived hosts: under 10k
+    // concurrent users the HTTP request must never hold an LLM call open. The
+    // results page already polls while status is SCORING, and a background
+    // failure rolls the attempt back to SUBMITTED for the retry/rescore path.
+    // On serverless (Vercel) there is no process left after the response, so
+    // the pipeline runs inline there.
+    const pipeline = this.writingAgent
       .scoreEssay({
         attemptId: attempt.id,
         questionPrompt: essayQuestion.passage
@@ -424,6 +426,8 @@ export class AttemptsService implements OnModuleInit {
           `Background AI scoring failed for attempt ${attempt.id}: ${message}`,
         );
       });
+
+    if (process.env.VERCEL) await pipeline;
 
     return {
       attemptId: attempt.id,
@@ -499,7 +503,9 @@ export class AttemptsService implements OnModuleInit {
     // immediately; the results page polls while SCORING. Content rejections
     // roll back to IN_PROGRESS (re-recordable), infrastructure failures to
     // SUBMITTED (rescore path).
-    void this.speakingAgent
+    // On serverless (Vercel) there is no process left to run "background"
+    // work after the response — the pipeline must run inline.
+    const pipeline = this.speakingAgent
       .scoreRecording({
         attemptId,
         cueCardPrompt: firstQuestion.passage
@@ -535,6 +541,8 @@ export class AttemptsService implements OnModuleInit {
           `Background AI speaking review failed for attempt ${attemptId}: ${message}`,
         );
       });
+
+    if (process.env.VERCEL) await pipeline;
 
     return {
       attemptId,

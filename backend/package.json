@@ -7,6 +7,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "vercel-build": "prisma generate && nest build",
+    "postinstall": "prisma generate",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -24,7 +26,7 @@
     "@langchain/langgraph": "^1.4.14",
     "@langchain/openai": "^1.5.11",
     "@nestjs/common": "^11.0.1",
-    "@nestjs/config": "^12.0.0",
+    "dotenv": "^16.4.7",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/throttler": "^6.5.0",
@@ -87,6 +89,9 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "engines": {
+    "node": "24.x"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts && ts-node prisma/seed-free-bank.ts",

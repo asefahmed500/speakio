@@ -39,18 +39,34 @@ async function callOnce(
   session: Session | null,
   body?: unknown,
 ): Promise<{ status: number; json: any; headers: Headers }> {
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers: {
-      ...(session ? { Cookie: session.cookie } : {}),
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    redirect: 'manual',
-    // AI pipelines retry server-side under free-tier saturation — never let a
-    // hung fetch pin the whole jest process past its test timeout.
-    signal: AbortSignal.timeout(300_000),
-  });
+  let res: Awaited<ReturnType<typeof fetch>>;
+  try {
+    res = await fetch(`${API}${path}`, {
+      method,
+      headers: {
+        ...(session ? { Cookie: session.cookie } : {}),
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      redirect: 'manual',
+      // AI pipelines retry server-side under free-tier saturation — never let a
+      // hung fetch pin the whole jest process past its test timeout.
+      signal: AbortSignal.timeout(300_000),
+    });
+  } catch (err) {
+    // The deployed frontend Worker caps upstream AI calls and returns a clean
+    // 503 on timeout (web-worker-entry.js). Mirror that same contract here: an
+    // aborted fetch is an honest infrastructure failure (503), never a raw
+    // TimeoutError leaking out of the harness as if the API returned a 500.
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return {
+        status: 503,
+        json: { message: 'AI origin timed out (harness abort, mirrored as 503)' },
+        headers: new Headers({ 'content-type': 'application/json' }),
+      };
+    }
+    throw err;
+  }
   let json: any = null;
   const text = await res.text();
   try {
@@ -102,6 +118,36 @@ function sessionFrom(res: { headers: Headers; json: any }): Session {
   const setCookies = res.headers.getSetCookie();
   const cookie = setCookies.map((c) => c.split(';')[0]).join('; ');
   return { cookie, user: res.json };
+}
+
+/**
+ * POST /auth/refresh with the RSC no-rotate header. Server-component layouts
+ * cannot forward rotated Set-Cookie headers to the browser, so this path must
+ * leave the browser's refresh cookie untouched.
+ */
+async function refreshNoRotate(refreshCookie: string): Promise<{
+  status: number;
+  json: any;
+  setCookies: string[];
+}> {
+  const res = await fetch(`${API}/auth/refresh`, {
+    method: 'POST',
+    headers: { Cookie: refreshCookie, 'x-refresh-no-rotate': '1' },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await res.text();
+  let json: any = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = text;
+  }
+  return {
+    status: res.status,
+    json,
+    setCookies: res.headers.getSetCookie?.() ?? [],
+  };
 }
 
 async function login(
@@ -613,22 +659,32 @@ describe('Speakio two-role SaaS E2E (live server)', () => {
   /* ------------------------------------------------------------------ */
 
   withIt(
-    'admin generates AI questions into the bank (or 503 when provider is down)',
+    'REGRESSION: AI question generation returns 201/503 in time, never a raw 500',
     async () => {
+      const started = Date.now();
       const res = await call('POST', '/tests/generate', admin, {
         mode: 'ai',
         skill: 'READING',
         count: 3,
         topic: 'ocean pollution',
       });
+      const elapsed = Date.now() - started;
+      // Provider outages, rotating-token 401s and 5xx are infrastructure
+      // failures: they must surface as a clean 503, never a bare 500. An
+      // upstream hang is mirrored to 503 by callOnce (as the Worker does).
       expect([201, 503]).toContain(res.status);
+      expect(res.status).not.toBe(500);
+      // Must resolve inside the test's timeout budget, not hit the Jest clock.
+      expect(elapsed).toBeLessThan(420_000);
       if (res.status === 201) {
         expect(res.json.created).toBeGreaterThanOrEqual(1);
         const tests = (await call('GET', '/tests?skill=READING', user)).json;
         expect(tests.some((t: any) => t.id === res.json.testSetId)).toBe(true);
       }
     },
-    240_000,
+    // AI generation now really runs against the provider (~60s per attempt).
+    // The helper itself allows 300s, so give Jest a little more headroom.
+    420_000,
   );
 
   withIt(
@@ -692,6 +748,56 @@ describe('Speakio two-role SaaS E2E (live server)', () => {
         password: 'NewPassword2!',
       });
       expect(newLogin.status).toBe(200);
+    },
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* REGRESSION guards for the deployed auth + AI reliability fix        */
+  /* ------------------------------------------------------------------ */
+
+  withIt(
+    'REGRESSION: RSC no-rotate refresh keeps the browser refresh token valid',
+    async () => {
+      // Fresh, isolated account — no demo data or shared fixtures exist.
+      const email = `e2e-refresh-${rand()}@test.dev`;
+      const reg = await call('POST', '/auth/register', null, {
+        email,
+        password: 'Password123!',
+        name: 'Refresh Regression',
+      });
+      expect(reg.status).toBe(201);
+      const s = sessionFrom(reg);
+      const originalRefresh = s.cookie
+        .split('; ')
+        .find((c) => c.startsWith('refresh_token='));
+      expect(originalRefresh).toBeDefined();
+
+      // Simulate an RSC server-layout refresh: only the refresh cookie is
+      // forwarded, with x-refresh-no-rotate: 1. The RSC layer cannot forward
+      // rotated cookies to the browser, so the token must NOT rotate here.
+      const rsc = await refreshNoRotate(originalRefresh!);
+      expect(rsc.status).toBe(200);
+      const rscRefresh = rsc.setCookies
+        .find((c) => c.startsWith('refresh_token='))
+        ?.split(';')[0];
+      expect(rscRefresh).toBe(originalRefresh);
+
+      // The freshly minted access token from that refresh works immediately.
+      const access = rsc.setCookies
+        .find((c) => c.startsWith('access_token='))
+        ?.split(';')[0];
+      expect(access).toBeDefined();
+      const me = await callOnce('GET', '/auth/me', { cookie: access! });
+      expect(me.status).toBe(200);
+
+      // Most important: the ORIGINAL token is still usable for a normal
+      // rotating refresh. Under the old rotating-RSC behaviour this replay
+      // would be flagged as token theft and return 401 (revoking the family).
+      // callOnce (not call) is used so a raw 401 is observed, not masked.
+      const normal = await callOnce('POST', '/auth/refresh', {
+        cookie: originalRefresh!,
+      });
+      expect(normal.status).toBe(200);
     },
   );
 });

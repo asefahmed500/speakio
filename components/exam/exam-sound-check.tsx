@@ -33,6 +33,8 @@ export function ExamSoundCheckModal({
 }: ExamSoundCheckProps) {
   const [soundChecked, setSoundChecked] = useState(skill === "READING" || skill === "WRITING")
   const [isPlayingSound, setIsPlayingSound] = useState(false)
+  const [soundError, setSoundError] = useState<string | null>(null)
+  const [isTestingMic, setIsTestingMic] = useState(false)
   const [micStream, setMicStream] = useState<MediaStream | null>(null)
   const [micVolume, setMicVolume] = useState(0)
   const [micTested, setMicTested] = useState(skill !== "SPEAKING")
@@ -57,12 +59,20 @@ export function ExamSoundCheckModal({
 
   const handleTestSound = async () => {
     setIsPlayingSound(true)
-    await examVoiceAgent.playSoundCheckTone()
-    setIsPlayingSound(false)
-    setSoundChecked(true)
+    setSoundError(null)
+    try {
+      await examVoiceAgent.playSoundCheckTone()
+      setSoundChecked(true)
+    } catch {
+      setSoundError("Audio playback failed. Check your browser sound settings and try again.")
+    } finally {
+      setIsPlayingSound(false)
+    }
   }
 
   const handleTestMic = async () => {
+    if (isTestingMic) return
+    setIsTestingMic(true)
     setMicError(null)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -84,48 +94,55 @@ export function ExamSoundCheckModal({
         ? "Microphone access was denied. Please allow microphone access in your browser settings."
         : "Failed to connect to your microphone."
       setMicError(msg)
+    } finally {
+      setIsTestingMic(false)
     }
   }
 
-  const canProceed = (!isAudioSkill || soundChecked) && (!isSpeaking || micTested)
+  // Checks are advisory — never trap the candidate on a missing mic/audio
+  // check. Typed answers and a non-audio fallback are always available.
+  const canProceed = true
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-      <div className="relative w-full max-w-xl overflow-hidden rounded-3xl border border-white/15 bg-gradient-to-b from-[#141C2D] to-[#0B0E14] p-6 sm:p-8 text-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/40 backdrop-blur-md">
+      <div className="relative w-full max-w-xl max-h-[92vh] overflow-y-auto rounded-3xl border border-border bg-card p-6 sm:p-8 text-foreground shadow-2xl">
         {/* Ambient glow */}
-        <div className="absolute -top-24 -right-24 h-48 w-48 rounded-full bg-cyan-500/20 blur-3xl pointer-events-none" />
+        <div className="absolute -top-24 -right-24 h-48 w-48 rounded-full bg-primary/5 blur-3xl pointer-events-none" />
 
         <div className="relative z-10 space-y-6">
           {/* Header */}
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] font-mono tracking-widest text-cyan-300 uppercase">
-              <ShieldCheck className="size-3.5 text-cyan-400" />
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-[11px] font-mono tracking-widest text-muted-foreground uppercase">
+              <ShieldCheck className="size-3.5 text-muted-foreground" />
               <span>Official IELTS Test Room Check</span>
             </div>
-            <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">{title}</h2>
-            <p className="text-xs sm:text-sm text-white/60">
-              Module: <span className="text-white font-medium">{skill}</span> · Time Limit:{" "}
-              <span className="text-white font-medium">{timeLimitMinutes} minutes</span> · Items:{" "}
-              <span className="text-white font-medium">{questionCount} questions</span>
+            <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">{title}</h2>
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              Module: <span className="text-foreground font-medium">{skill}</span> · Time Limit:{" "}
+              <span className="text-foreground font-medium">{timeLimitMinutes} minutes</span> · Items:{" "}
+              <span className="text-foreground font-medium">{questionCount} questions</span>
             </p>
           </div>
 
           {/* Test Equipment Checklist */}
-          <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 backdrop-blur-xl">
-            <h3 className="text-xs font-mono uppercase tracking-wider text-white/50">
+          <div className="space-y-3 rounded-2xl border border-border bg-muted p-4 sm:p-5 backdrop-blur-xl">
+            <h3 className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
               Pre-Exam System Calibration
             </h3>
 
             {/* Sound Check (for Listening & Speaking) */}
             {isAudioSkill && (
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-subtle p-3.5">
                 <div className="flex items-center gap-3">
-                  <div className="flex size-9 items-center justify-center rounded-lg border border-white/15 bg-white/10 text-white">
+                  <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-muted text-foreground">
                     <Headphones className="size-4" />
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-white">Headphones & Audio Output</p>
-                    <p className="text-[11px] text-white/50">Verify you can hear IELTS prompts clearly</p>
+                    <p className="text-xs font-medium text-foreground">Headphones & Audio Output</p>
+                    <p className="text-[11px] text-muted-foreground">Verify you can hear IELTS prompts clearly</p>
+                    {soundError && (
+                      <p role="alert" className="pt-1 text-[11px] text-red-700">{soundError}</p>
+                    )}
                   </div>
                 </div>
 
@@ -133,29 +150,29 @@ export function ExamSoundCheckModal({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={handleTestSound}
+                    onClick={() => void handleTestSound()}
                     disabled={isPlayingSound}
-                    className="cursor-pointer border-white/20 bg-white/5 text-xs text-white hover:bg-white/10"
+                    className="cursor-pointer border-border bg-muted text-xs text-foreground hover:bg-muted"
                   >
                     <Play className="size-3 mr-1" />
                     {isPlayingSound ? "Testing…" : "Play Chime"}
                   </Button>
-                  {soundChecked && <CheckCircle2 className="size-4 text-emerald-400" />}
+                  {soundChecked && <CheckCircle2 className="size-4 text-emerald-700" />}
                 </div>
               </div>
             )}
 
             {/* Mic Check (for Speaking) */}
             {isSpeaking && (
-              <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
+              <div className="space-y-3 rounded-xl border border-border bg-surface-subtle p-3.5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="flex size-9 items-center justify-center rounded-lg border border-white/15 bg-white/10 text-white">
+                    <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-muted text-foreground">
                       <Mic className="size-4" />
                     </div>
                     <div>
-                      <p className="text-xs font-medium text-white">Microphone Input</p>
-                      <p className="text-[11px] text-white/50">Speak aloud to calibrate speech volume</p>
+                      <p className="text-xs font-medium text-foreground">Microphone Input</p>
+                      <p className="text-[11px] text-muted-foreground">Speak aloud to calibrate speech volume</p>
                     </div>
                   </div>
 
@@ -164,13 +181,14 @@ export function ExamSoundCheckModal({
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={handleTestMic}
-                        className="cursor-pointer border-white/20 bg-white/5 text-xs text-white hover:bg-white/10"
+                        onClick={() => void handleTestMic()}
+                        disabled={isTestingMic}
+                        className="cursor-pointer border-border bg-muted text-xs text-foreground hover:bg-muted disabled:opacity-60"
                       >
-                        Enable & Test Mic
+                        {isTestingMic ? "Connecting…" : "Enable & Test Mic"}
                       </Button>
                     ) : (
-                      <span className="text-xs font-mono text-emerald-400 flex items-center gap-1">
+                      <span className="text-xs font-mono text-emerald-700 flex items-center gap-1">
                         <CheckCircle2 className="size-3.5" /> Mic Active
                       </span>
                     )}
@@ -180,13 +198,13 @@ export function ExamSoundCheckModal({
                 {/* Live Volume Meter */}
                 {micStream && (
                   <div className="space-y-1.5 pt-1">
-                    <div className="flex justify-between text-[10px] font-mono text-white/50">
+                    <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
                       <span>INPUT LEVEL</span>
                       <span>{micTested ? "GOOD" : "SPEAK INTO MIC"}</span>
                     </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                       <div
-                        className="h-full bg-gradient-to-r from-cyan-400 via-emerald-400 to-amber-400 transition-all duration-75"
+                        className="h-full bg-gradient-to-r from-primary to-primary transition-all duration-75"
                         style={{ width: `${Math.max(5, micVolume)}%` }}
                       />
                     </div>
@@ -194,7 +212,7 @@ export function ExamSoundCheckModal({
                 )}
 
                 {micError && (
-                  <p className="text-xs text-rose-300 flex items-center gap-1.5 pt-1">
+                  <p className="text-xs text-red-600 flex items-center gap-1.5 pt-1">
                     <AlertCircle className="size-3.5 shrink-0" />
                     {micError}
                   </p>
@@ -203,11 +221,11 @@ export function ExamSoundCheckModal({
             )}
 
             {/* Exam Room Guidelines */}
-            <div className="space-y-1.5 pt-1 text-xs text-white/60">
-              <p className="flex items-center gap-1.5 text-white/80 font-medium">
-                <Sparkles className="size-3.5 text-cyan-400" /> Real Exam Conditions
+            <div className="space-y-1.5 pt-1 text-xs text-muted-foreground">
+              <p className="flex items-center gap-1.5 text-foreground font-medium">
+                <Sparkles className="size-3.5 text-muted-foreground" /> Real Exam Conditions
               </p>
-              <ul className="list-disc list-inside space-y-1 text-[11px] text-white/50">
+              <ul className="list-disc list-inside space-y-1 text-[11px] text-muted-foreground">
                 <li>Timer starts immediately when you click &ldquo;Begin Exam&rdquo;.</li>
                 <li>Your work is automatically saved every 15 seconds.</li>
                 <li>When the timer reaches 00:00, your exam will automatically submit for AI evaluation.</li>

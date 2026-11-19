@@ -3,7 +3,7 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-11-18",
   "vars": {
-    "API_ORIGIN": "https://shop-monitors-prepaid-paintings.trycloudflare.com"
+    "API_ORIGIN": "https://speakio-api.vercel.app"
   },
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "speakio-media" }

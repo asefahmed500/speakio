@@ -20,7 +20,7 @@ export default async function VerifyCertificatePage({
       <div className="space-y-6 text-[#111111]">
         {result.kind === "NOT_FOUND" ? (
           <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-wider text-neutral-400">Result</p>
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Result</p>
             <h1 className="text-lg font-semibold tracking-[-0.02em]">Not found</h1>
             <p className="break-all text-xs leading-relaxed text-neutral-600">
               No certificate matches <span className="font-mono">{certificateId}</span>.
@@ -28,7 +28,7 @@ export default async function VerifyCertificatePage({
           </div>
         ) : result.kind === "UNREACHABLE" ? (
           <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-wider text-neutral-400">Result</p>
+            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Result</p>
             <h1 className="text-lg font-semibold tracking-[-0.02em]">Service busy</h1>
             <p className="text-xs leading-relaxed text-neutral-600">Please refresh and try again.</p>
           </div>
@@ -54,7 +54,7 @@ function VerificationCard({ certificate }: { certificate: PublicCertificate }) {
   return (
     <div className="space-y-5">
       <div>
-        <p className="text-[11px] uppercase tracking-wider text-neutral-400">Certificate</p>
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Certificate</p>
         <h1 className="text-lg font-semibold tracking-[-0.02em]">
           {revoked ? "Revoked" : "Verified"}
         </h1>

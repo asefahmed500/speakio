@@ -16,11 +16,11 @@ interface AttemptRow {
 }
 
 const STATUS_TONE: Record<AttemptRow["status"], string> = {
-  IN_PROGRESS: "border-sky-500/30 bg-sky-500/10 text-sky-400",
-  SUBMITTED: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-  SCORING: "border-purple-500/30 bg-purple-500/10 text-purple-300 animate-pulse",
-  NEEDS_REVIEW: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-  COMPLETED: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  IN_PROGRESS: "border-sky-500/30 bg-sky-500/10 text-sky-700",
+  SUBMITTED: "border-amber-500/30 bg-amber-500/10 text-amber-700",
+  SCORING: "border-purple-500/30 bg-purple-500/10 text-purple-700 animate-pulse",
+  NEEDS_REVIEW: "border-amber-500/30 bg-amber-500/10 text-amber-700",
+  COMPLETED: "border-border bg-muted text-emerald-700",
 }
 
 const STATUS_LABEL: Record<AttemptRow["status"], string> = {
@@ -69,13 +69,13 @@ export default function ResultsIndexPage() {
   return (
     <div className="flex-1 bg-background text-foreground min-h-0 relative overflow-hidden">
       {/* Background ambient lighting */}
-      <div className="pointer-events-none absolute -top-40 right-1/4 h-96 w-96 rounded-full bg-emerald-500/10 blur-[120px]" />
+      <div className="pointer-events-none absolute -top-40 right-1/4 h-96 w-96 rounded-full bg-muted blur-[120px]" />
       <div className="pointer-events-none absolute top-1/3 -left-20 h-96 w-96 rounded-full bg-sky-500/10 blur-[140px]" />
 
-      <div className="relative max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-8">
+      <div className="relative w-full mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-mono uppercase tracking-widest text-emerald-400 mb-3">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-xs font-mono uppercase tracking-widest text-emerald-700 mb-3">
               Official IELTS Record Vault
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
@@ -163,7 +163,7 @@ export default function ResultsIndexPage() {
                     {a.bandScore != null && (
                       <div className="text-right">
                         <div className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground">IELTS Band</div>
-                        <div className="text-2xl font-bold font-mono tabular-nums text-emerald-400">
+                        <div className="text-2xl font-bold font-mono tabular-nums text-emerald-700">
                           {a.bandScore.toFixed(1)}
                         </div>
                       </div>
