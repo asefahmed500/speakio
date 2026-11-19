@@ -120,10 +120,6 @@ function LoginForm() {
         <p className="border-t border-black/5 pt-4 text-center text-[11px] text-neutral-400">
           No sign-in required to <Link href="/verify" className="underline underline-offset-4">verify a certificate</Link>.
         </p>
-
-        <p className="border-t border-black/5 pt-4 text-center text-[11px] text-neutral-400">
-          No sign-in required to <Link href="/verify" className="underline underline-offset-4">verify a certificate</Link>.
-        </p>
     </div>
   )
 }

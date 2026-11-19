@@ -29,5 +29,8 @@
   "vars": {
     "FRONTEND_URL": "https://speakio-web.speakio.workers.dev",
     "COOKIE_SAMESITE": "none"
-  }
+  },
+  "hyperdrive": [
+    { "binding": "HYPERDRIVE", "id": "524f57f8eaad42c89d9a3f385a6f6b78" }
+  ]
 }

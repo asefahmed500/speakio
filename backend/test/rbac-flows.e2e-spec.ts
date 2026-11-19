@@ -11,7 +11,8 @@
 import { describe, beforeAll, it, expect } from '@jest/globals';
 
 const API = process.env.E2E_API_URL ?? 'http://localhost:4040';
-const SEED_PASSWORD = process.env.SEED_PASSWORD ?? 'password123';
+const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL ?? 'admin@speakio.com';
+const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? 'TestAdmin123!';
 
 let serverUp = false;
 const withIt = (name: string, fn: () => unknown, timeout?: number) =>
@@ -105,7 +106,7 @@ function sessionFrom(res: { headers: Headers; json: any }): Session {
 
 async function login(
   email: string,
-  password = SEED_PASSWORD,
+  password = ADMIN_PASSWORD,
 ): Promise<Session> {
   const res = await call('POST', '/auth/login', null, { email, password });
   expect(res.status).toBe(200);
@@ -171,7 +172,7 @@ describe('Speakio two-role SaaS E2E (live server)', () => {
       console.warn(`[e2e] backend not reachable at ${API} — suite skipped`);
       return;
     }
-    admin = await login('admin@speakio.com');
+    admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
   });
 
   /* ------------------------------------------------------------------ */
@@ -195,7 +196,7 @@ describe('Speakio two-role SaaS E2E (live server)', () => {
 
   withIt('rejects duplicate registration with 409', async () => {
     const res = await call('POST', '/auth/register', null, {
-      email: 'user@speakio.com',
+      email: user.user!.email,
       password: 'Password123!',
       name: 'Duplicate',
     });
@@ -204,7 +205,7 @@ describe('Speakio two-role SaaS E2E (live server)', () => {
 
   withIt('rejects a wrong password with 401', async () => {
     const res = await call('POST', '/auth/login', null, {
-      email: 'user@speakio.com',
+      email: user.user!.email,
       password: 'wrong-password',
     });
     expect(res.status).toBe(401);
@@ -652,12 +653,13 @@ describe('Speakio two-role SaaS E2E (live server)', () => {
   /* Certificates + password change                                      */
   /* ------------------------------------------------------------------ */
 
-  withIt('verifies a certificate publicly without auth', async () => {
-    const res = await call('GET', '/certificates/verify/SPK-VERIFY-8891', null);
-    expect(res.status).toBe(200);
-    expect(res.json.certificateNumber).toBe('SPK-2026-8891-B80');
+  withIt('public certificate verification needs no auth and rejects unknown codes', async () => {
+    // No seeded/demo certificate exists in production — an unknown code must
+    // return 404 (not 401), proving the endpoint is public but truthful.
     const missing = await call('GET', '/certificates/verify/NOPE-404', null);
     expect(missing.status).toBe(404);
+    const malformed = await call('GET', '/certificates/verify/DOES-NOT-EXIST-999', null);
+    expect(malformed.status).toBe(404);
   });
 
   withIt(

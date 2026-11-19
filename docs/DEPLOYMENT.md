@@ -8,9 +8,20 @@ Browser
   → https://speakio-api.speakio.workers.dev   (edge reverse-proxy Worker, api-proxy/)
   → Cloudflare Tunnel (trycloudflare.com)
   → localhost:4040  NestJS API
-  → PostgreSQL 18 (local dev database)
+  → PostgreSQL (Prisma cloud Postgres, db.prisma.io) — all 9 migrations applied
   → Cloudflare Workers AI (free models: @cf/zai-org/glm-4.7-flash + Whisper ASR)
 ```
+
+Cloudflare resources provisioned: Hyperdrive `speakio-hyperdrive`
+(id `524f57f8eaad42c89d9a3f385a6f6b78`) for Worker→Postgres connections and
+R2 bucket `speakio-media` for future file storage (bound to the API Worker).
+`ops/api-watchdog.ps1` is registered as a Windows scheduled task every 5
+minutes: it detects a dead quick-tunnel origin, restarts cloudflared, updates
+the API Worker's `API_ORIGIN` and redeploys it.
+
+**No demo data exists**: seed only creates IELTS test content; accounts are
+created through registration, and the first ADMIN is bootstrapped with
+`ADMIN_EMAIL=... ADMIN_PASSWORD=<12+ chars> npm run create-admin`.
 
 The frontend Worker auto-scales on Cloudflare's edge. The API Worker gives a
 stable API hostname; only the tunnel origin is ephemeral (URL changes whenever
@@ -54,14 +65,12 @@ Secrets live in `.env` / `.env.local` (git-ignored). Worker variables:
 - Backend: `DATABASE_URL`, `JWT_SECRET`, `CF_AI_TOKEN` (Cloudflare API token used as `ZAI_API_KEY`), `FRONTEND_URL`, `COOKIE_SAMESITE=none` for cross-site auth cookies, optional `CF_EMAIL_API_TOKEN`/`CF_ACCOUNT_ID`/`CF_EMAIL_FROM` for password-reset email.
 - AI provider: `ZAI_BASE_URL=https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1`, `ZAI_API_KEY=<CF token>`, all three `ZAI_MODEL_*` = `@cf/zai-org/glm-4.7-flash`, `ZAI_MODEL_ASR=@cf/openai/whisper-large-v3-turbo`. The `ZAI_*` names are kept as the provider contract; the transport is Cloudflare's OpenAI-compatible Workers AI endpoint. Reasoning models need ~8k `max_tokens` for structured JSON.
 
-### Cloudflare database status (honest)
+### Cloudflare database status
 
-A D1 database `speakio-db` was provisioned on the account, but it is SQLite and
-the application is PostgreSQL + Prisma (Postgres enums, partial indexes, raw
-SQL migrations). It is **not wired into the app** — wiring it would be a real
-port, not a config change. The live application database remains PostgreSQL.
-A fully cloud-native backend additionally requires the Workers Paid plan
-(Containers) plus a managed Postgres such as Neon (Hyperdrive or direct URL).
+The live database is now **Prisma cloud Postgres** (`db.prisma.io`), not local:
+`npx prisma migrate deploy` applied all 9 migrations and `npx prisma db seed`
+loaded the test content. Hyperdrive `speakio-hyperdrive` is configured for
+Worker access. D1 `speakio-db` exists but remains unwired (SQLite vs Postgres).
 
 ## Cloudflare Containers (requires Workers Paid plan)
 
