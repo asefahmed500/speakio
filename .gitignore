@@ -38,6 +38,7 @@ pnpm-debug.log*
 /.deploy/
 /.open-next/
 /.wrangler/
+/api-proxy/.wrangler/
 /backups/
 /backend/.srv-*.log
 /backend/.fg-*.log
