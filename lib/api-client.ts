@@ -3,12 +3,11 @@
  * All calls are credential-authenticated via the httpOnly access_token cookie.
  */
 
+// The API base is baked at build time from NEXT_PUBLIC_API_URL. Never derive
+// it from window.location — that breaks cross-origin deployments (e.g. a
+// *.workers.dev frontend must call the dedicated API Worker, not itself:4040).
 export const API_URL =
-  typeof window !== "undefined" &&
-  window.location.hostname !== "localhost" &&
-  window.location.hostname !== "127.0.0.1"
-    ? `${window.location.protocol}//${window.location.hostname}:4040`
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:4040"
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4040"
 
 export class ApiError extends Error {
   status: number
@@ -34,7 +33,7 @@ function extractMessage(body: unknown, fallback: string): string {
   return fallback
 }
 
-const DEFAULT_TIMEOUT_MS = 15_000
+const DEFAULT_TIMEOUT_MS = 45_000
 
 // Guards against redirect loops when several in-flight requests all hit 401.
 let redirectingToLogin = false

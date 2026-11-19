@@ -27,6 +27,13 @@ The frontend Worker auto-scales on Cloudflare's edge. The API Worker gives a
 stable API hostname; only the tunnel origin is ephemeral (URL changes whenever
 the tunnel restarts).
 
+## API client contract
+
+`lib/api-client.ts` uses **only** the build-time `NEXT_PUBLIC_API_URL` (the API
+Worker URL). It never derives the base from `window.location` and never appends
+`:4040` on cloud origins — that bug caused cross-origin login/register timeouts
+and is fixed. Default request timeout is 45 s for slow serverless hops.
+
 ## One-command deploy / recovery
 
 ```powershell
