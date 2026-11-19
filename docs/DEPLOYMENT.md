@@ -6,7 +6,7 @@
 Browser
   → https://speakio-web.speakio.workers.dev   (Next.js 16 via OpenNext Worker + static assets)
   → https://speakio-api.speakio.workers.dev   (edge reverse-proxy Worker, api-proxy/)
-  → Cloudflare Tunnel (trycloudflare.com)
+  → Vercel serverless (speakio-api.vercel.app)
   → localhost:4040  NestJS API
   → PostgreSQL (Prisma cloud Postgres, db.prisma.io) — all 9 migrations applied
   → Cloudflare Workers AI (free models: @cf/zai-org/glm-4.7-flash + Whisper ASR)
@@ -16,7 +16,7 @@ Cloudflare resources provisioned: Hyperdrive `speakio-hyperdrive`
 (id `524f57f8eaad42c89d9a3f385a6f6b78`) for Worker→Postgres connections and
 R2 bucket `speakio-media` for future file storage (bound to the API Worker).
 `ops/api-watchdog.ps1` is registered as a Windows scheduled task every 5
-minutes: it detects a dead quick-tunnel origin, restarts cloudflared, updates
+minutes: it verifies the public API and frontend endpoints and redeploys the
 the API Worker's `API_ORIGIN` and redeploys it.
 
 **No demo data exists**: seed only creates IELTS test content; accounts are
@@ -79,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File .\deploy.ps1
 3. Update `api-proxy/wrangler.jsonc` `API_ORIGIN` and deploy `speakio-api`.
 4. Build the frontend with `NEXT_PUBLIC_API_URL=https://speakio-web.speakio.workers.dev/api` (`npm run cf:build`) and deploy `speakio-web` (entrypoint `web-worker-entry.js`).
 
-Run it after every machine reboot or tunnel drop. Nothing else needs manual wiring.
+Run it to ship backend or frontend changes. Nothing else needs manual wiring.
 
 ## Manual commands
 
@@ -132,7 +132,7 @@ deploy `speakio-api`: that Worker's `API_ORIGIN` is an ephemeral
 `deploy.ps1` on the host after a reboot or tunnel change to update the origin
 and redeploy the API Worker. A fresh clone cannot deploy a working backend
 from CI alone — the NestJS process and tunnel still run on the host (Containers
-require the paid Cloudflare plan).
+require the paid Cloudflare plan; Vercel Hobby caps serverless at 60 s).
 
 ### Cloudflare database status
 
