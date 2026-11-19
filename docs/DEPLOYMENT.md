@@ -29,10 +29,27 @@ the tunnel restarts).
 
 ## API client contract
 
-`lib/api-client.ts` uses **only** the build-time `NEXT_PUBLIC_API_URL` (the API
-Worker URL). It never derives the base from `window.location` and never appends
-`:4040` on cloud origins — that bug caused cross-origin login/register timeouts
-and is fixed. Default request timeout is 45 s for slow serverless hops.
+`lib/api-client.ts` uses **only** the build-time `NEXT_PUBLIC_API_URL`. It never
+derives the base from `window.location` and never appends `:4040` on cloud
+origins — that bug caused cross-origin login/register timeouts and is fixed.
+Default request timeout is 45 s for slow serverless hops.
+
+Production builds set `NEXT_PUBLIC_API_URL=https://speakio-web.speakio.workers.dev/api`.
+The frontend Worker (`web-worker-entry.js`) proxies `/api/*` to the API Worker,
+so the API is **same-origin** with the pages: auth cookies are stored on the
+frontend host and reach `proxy.ts` and the server layouts. This is required
+because `workers.dev` is on the Public Suffix List — `speakio-web` and
+`speakio-api` cannot share a `Domain=` cookie. In local dev the default
+`http://localhost:4040` keeps cookies shared across ports as before.
+
+### Session refresh across RSC navigations
+
+`lib/session.ts` calls `/auth/refresh` with `x-refresh-no-rotate: 1` when the
+access token has expired. RSC responses cannot forward rotated `Set-Cookie`
+headers to the browser, so rotating during a server-side refresh invalidated
+the browser's refresh token and the next navigation bounced to `/login`.
+Non-rotating refresh keeps the browser cookie valid; browser-driven refreshes
+in `lib/api-client.ts` still rotate normally.
 
 ## One-command deploy / recovery
 
@@ -44,7 +61,7 @@ powershell -ExecutionPolicy Bypass -File .\deploy.ps1
 1. Start/reuse the backend from `backend/dist` (health-checked).
 2. Start/reuse `cloudflared` tunnel and read the fresh `*.trycloudflare.com` URL.
 3. Update `api-proxy/wrangler.jsonc` `API_ORIGIN` and deploy `speakio-api`.
-4. Build the frontend with `NEXT_PUBLIC_API_URL=https://speakio-api.speakio.workers.dev` (`npm run cf:build`) and deploy `speakio-web`.
+4. Build the frontend with `NEXT_PUBLIC_API_URL=https://speakio-web.speakio.workers.dev/api` (`npm run cf:build`) and deploy `speakio-web` (entrypoint `web-worker-entry.js`).
 
 Run it after every machine reboot or tunnel drop. Nothing else needs manual wiring.
 
@@ -58,7 +75,7 @@ Run it after every machine reboot or tunnel drop. Nothing else needs manual wiri
 | Frontend Worker build+deploy | `npm run cf:build && npx wrangler deploy` |
 | API proxy deploy | `cd api-proxy && npx wrangler deploy` |
 | DB migrations | `cd backend && npx prisma migrate deploy` |
-| Seed (accounts + demo) | `npx prisma db seed` |
+| Seed (IELTS content only, no demo accounts) | `npx prisma db seed` |
 | Seed free IELTS bank | `npx ts-node prisma/seed-free-bank.ts` (also part of `db seed`) |
 | Backup | `powershell -File backend/scripts/backup.ps1` (pg_dump, 14-day retention) |
 | Tests | `npm test` (root, Vitest), `npm --prefix backend test`, `npm --prefix backend run test:e2e` |
@@ -67,10 +84,22 @@ Run it after every machine reboot or tunnel drop. Nothing else needs manual wiri
 
 Secrets live in `.env` / `.env.local` (git-ignored). Worker variables:
 
-- `speakio-web`: `NEXT_PUBLIC_API_URL` baked at build time (currently the API Worker).
+- `speakio-web`: `NEXT_PUBLIC_API_URL` baked at build time (currently the same-origin `/api` path on the frontend Worker).
 - `speakio-api`: `API_ORIGIN` = current tunnel URL.
-- Backend: `DATABASE_URL`, `JWT_SECRET`, `CF_AI_TOKEN` (Cloudflare API token used as `ZAI_API_KEY`), `FRONTEND_URL`, `COOKIE_SAMESITE=none` for cross-site auth cookies, optional `CF_EMAIL_API_TOKEN`/`CF_ACCOUNT_ID`/`CF_EMAIL_FROM` for password-reset email.
-- AI provider: `ZAI_BASE_URL=https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1`, `ZAI_API_KEY=<CF token>`, all three `ZAI_MODEL_*` = `@cf/zai-org/glm-4.7-flash`, `ZAI_MODEL_ASR=@cf/openai/whisper-large-v3-turbo`. The `ZAI_*` names are kept as the provider contract; the transport is Cloudflare's OpenAI-compatible Workers AI endpoint. Reasoning models need ~8k `max_tokens` for structured JSON.
+- Backend: `DATABASE_URL`, `JWT_SECRET`, `FRONTEND_URL`, `COOKIE_SAMESITE=lax` (same-origin after the `/api` proxy; `none` only for genuinely cross-site setups), optional `CF_EMAIL_API_TOKEN`/`CF_ACCOUNT_ID`/`CF_EMAIL_FROM` for password-reset email.
+- AI provider: `ZAI_BASE_URL=https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1`, `ZAI_API_KEY`, all three `ZAI_MODEL_*` = `@cf/zai-org/glm-4.7-flash`, `ZAI_MODEL_ASR=@cf/openai/whisper-large-v3-turbo`. The `ZAI_*` names are kept as the provider contract; transport is Cloudflare's OpenAI-compatible Workers AI endpoint.
+
+`backend/src/common/ai-token.ts` resolves the AI credential at call time:
+it reads wrangler's OAuth token (which Cloudflare rotates) from the local
+wrangler config and falls back to `ZAI_API_KEY`. The credential is never
+cached across rotations, and a provider 401 triggers one refresh-and-retry.
+`ops/api-watchdog.ps1` also runs `wrangler whoami` each cycle to keep that
+token fresh. For a non-wrangler deployment, set `ZAI_API_KEY` to a dedicated
+API token with Workers AI permission.
+
+Study-plan generation deliberately asks for 5–7 short milestones with
+`maxTokens: 4000` and `timeoutMs: 90_000`: longer prompts overflowed the token
+budget and retried past Cloudflare's 100 s edge timeout (524).
 
 ### Cloudflare database status
 

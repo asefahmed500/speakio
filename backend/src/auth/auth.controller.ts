@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Headers,
   Get,
   HttpCode,
   Post,
@@ -147,9 +148,11 @@ export class AuthController {
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
+    @Headers('x-refresh-no-rotate') noRotate?: string,
   ) {
     const result = await this.authService.refresh(
       req.cookies?.refresh_token as string | undefined,
+      noRotate !== '1',
     );
     this.setAuthCookies(res, result.accessToken, result.refreshToken);
     return result.user;

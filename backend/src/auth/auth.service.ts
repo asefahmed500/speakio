@@ -212,7 +212,7 @@ export class AuthService {
    * Rotates a refresh token. Reuse of a rotated (revoked) token revokes the
    * entire family before rejecting — the standard theft-detection response.
    */
-  async refresh(rawToken: string | undefined) {
+  async refresh(rawToken: string | undefined, rotate = true) {
     if (!rawToken) {
       throw new UnauthorizedException('Refresh token missing');
     }
@@ -235,22 +235,29 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token expired');
     }
 
-    const nextRaw = crypto.randomBytes(48).toString('base64url');
-    const expiresAt = this.refreshExpiry();
-    await this.prisma.$transaction([
-      this.prisma.refreshToken.update({
-        where: { id: stored.id },
-        data: { revokedAt: new Date() },
-      }),
-      this.prisma.refreshToken.create({
-        data: {
-          tokenHash: this.hashToken(nextRaw),
-          userId: stored.userId,
-          familyId: stored.familyId,
-          expiresAt,
-        },
-      }),
-    ]);
+    // Server-side RSC refreshes cannot forward rotated Set-Cookie headers to
+    // the browser. Reusing the same refresh token there keeps the browser's
+    // cookie valid; browser-driven refreshes still rotate normally.
+    let nextRaw = rawToken;
+    let expiresAt = stored.expiresAt;
+    if (rotate) {
+      nextRaw = crypto.randomBytes(48).toString('base64url');
+      expiresAt = this.refreshExpiry();
+      await this.prisma.$transaction([
+        this.prisma.refreshToken.update({
+          where: { id: stored.id },
+          data: { revokedAt: new Date() },
+        }),
+        this.prisma.refreshToken.create({
+          data: {
+            tokenHash: this.hashToken(nextRaw),
+            userId: stored.userId,
+            familyId: stored.familyId,
+            expiresAt,
+          },
+        }),
+      ]);
+    }
 
     const user = await this.prisma.user.findUnique({
       where: { id: stored.userId },

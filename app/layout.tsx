@@ -18,6 +18,16 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className="scroll-smooth font-sans">
       <head>
+        {/* esbuild's __name helper is referenced by some injected/eval'd
+            scripts (browser tooling, devtools extensions). Define it as a
+            harmless global so those scripts never throw
+            "ReferenceError: __name is not defined" on our pages. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "typeof window!=='undefined'&&(window.__name=window.__name||function(t,v){try{if(typeof t==='function'&&v){Object.defineProperty(t,'name',{value:v,configurable:true})}}catch(e){}return t});",
+          }}
+        />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         {/* Root layout — applies to every page. Google Fonts via link keeps

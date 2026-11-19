@@ -11,6 +11,12 @@ function Write-Log($msg) {
   Write-Host $line
 }
 
+# 0. Keep wrangler's OAuth token fresh — the backend reads it at call time for
+#    Workers AI, and Cloudflare rotates it automatically.
+Push-Location $root
+try { cmd /c "npx wrangler whoami > .deploy\watchdog-whoami.log 2>&1" } catch {}
+Pop-Location
+
 $healthy = $false
 try {
   $r = Invoke-RestMethod -Uri $apiWorker -TimeoutSec 12 -ErrorAction Stop

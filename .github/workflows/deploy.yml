@@ -35,7 +35,7 @@ jobs:
       - name: Production build
         run: npm run build
         env:
-          NEXT_PUBLIC_API_URL: https://speakio-api.speakio.workers.dev
+          NEXT_PUBLIC_API_URL: https://speakio-web.speakio.workers.dev/api
 
   deploy:
     needs: verify
@@ -58,7 +58,7 @@ jobs:
       - name: Build frontend Worker
         run: npm run cf:build
         env:
-          NEXT_PUBLIC_API_URL: https://speakio-api.speakio.workers.dev
+          NEXT_PUBLIC_API_URL: https://speakio-web.speakio.workers.dev/api
       - name: Deploy frontend Worker
         uses: cloudflare/wrangler-action@v3
         with:

@@ -29,7 +29,12 @@ export async function getSessionUser(): Promise<SessionResult> {
       if (refreshToken) {
         const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
           method: "POST",
-          headers: { Cookie: `refresh_token=${refreshToken}` },
+          headers: {
+            Cookie: `refresh_token=${refreshToken}`,
+            // An RSC refresh cannot forward rotated cookies to the browser, so
+            // keep the browser's refresh token valid instead of rotating it.
+            "x-refresh-no-rotate": "1",
+          },
           cache: "no-store",
         })
         if (refreshRes.ok) {

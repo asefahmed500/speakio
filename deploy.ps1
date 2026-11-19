@@ -39,7 +39,10 @@ if ($health -ne "ok") { throw "Tunnel is up but origin is unreachable" }
 Write-Host "   API URL: $api" -ForegroundColor Green
 
 Write-Host "== 3/4 Frontend build (API URL baked in) ==" -ForegroundColor Cyan
-cmd /c "set NEXT_PUBLIC_API_URL=$api&& npm run cf:build > .deploy\cfbuild.log 2>&1"
+# Same-origin API path: the frontend Worker proxies /api/* to the API Worker.
+# This keeps auth cookies on the frontend host (workers.dev is a public suffix,
+# so a shared Domain cookie across speakio-web/speakio-api is impossible).
+cmd /c "set NEXT_PUBLIC_API_URL=https://speakio-web.speakio.workers.dev/api&& npm run cf:build > .deploy\cfbuild.log 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "OpenNext build failed - see .deploy\cfbuild.log" }
 Write-Host "   build OK" -ForegroundColor Green
 

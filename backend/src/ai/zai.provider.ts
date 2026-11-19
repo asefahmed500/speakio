@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import OpenAI from 'openai';
+import { getAiToken, refreshAiToken } from '../common/ai-token';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -28,6 +29,7 @@ export interface GenerateResult {
 export class ZaiProvider {
   private readonly logger = new Logger(ZaiProvider.name);
   private client: OpenAI | null = null;
+  private clientKey = '';
 
   /**
    * Small in-process circuit breaker. A sustained provider outage (429 quota,
@@ -74,27 +76,29 @@ export class ZaiProvider {
    * were unused — now only the AI call paths fail, with a clear error.
    */
   private getClient(): OpenAI {
-    if (!this.client) {
-      const apiKey = process.env.ZAI_API_KEY;
-      if (!apiKey) {
-        throw new Error('ZAI_API_KEY environment variable is required');
-      }
-      const baseURL =
-        process.env.ZAI_BASE_URL || 'https://api.z.ai/api/paas/v4';
-      this.client = new OpenAI({
-        apiKey,
-        baseURL,
-        timeout: 90_000,
-        // The SDK's built-in exponential backoff absorbs transient network
-        // blips and 429/5xx without failing the whole task chain.
-        maxRetries: 2,
-      });
-      this.logger.log(`Initialized Z.AI Provider pointing to ${baseURL}`);
+    // Rebuild when the rotating credential changes so a stale cached client
+    // never keeps sending an expired OAuth token.
+    const apiKey = getAiToken();
+    if (!apiKey) {
+      throw new Error('ZAI_API_KEY environment variable is required');
     }
+    if (this.client && this.clientKey === apiKey) return this.client;
+
+    const baseURL = process.env.ZAI_BASE_URL || 'https://api.z.ai/api/paas/v4';
+    this.client = new OpenAI({
+      apiKey,
+      baseURL,
+      timeout: 90_000,
+      // The SDK's built-in exponential backoff absorbs transient network
+      // blips and 429/5xx without failing the whole task chain.
+      maxRetries: 2,
+    });
+    this.clientKey = apiKey;
+    this.logger.log(`Initialized AI provider pointing to ${baseURL}`);
     return this.client;
   }
 
-  async generate(options: GenerateOptions): Promise<GenerateResult> {
+  async generate(options: GenerateOptions, retried = false): Promise<GenerateResult> {
     this.assertAvailable();
     try {
       const response = await this.getClient().chat.completions.create(
@@ -120,11 +124,20 @@ export class ZaiProvider {
         model: response.model,
       };
     } catch (error) {
+      // OAuth tokens rotate; a 401 means the cached client holds a stale one.
+      // Refresh through wrangler and retry exactly once.
+      const status = (error as { status?: number } | null)?.status;
+      if (status === 401 && !retried) {
+        refreshAiToken();
+        this.client = null;
+        this.clientKey = '';
+        return this.generate(options, true);
+      }
       this.recordFailure();
       const message = error instanceof Error ? error.message : String(error);
       const stack = error instanceof Error ? error.stack : undefined;
       this.logger.error(
-        `Z.AI generation failed on model ${options.model}: ${message}`,
+        `AI generation failed on model ${options.model}: ${message}`,
         stack,
       );
       throw error;
@@ -173,7 +186,7 @@ export class ZaiProvider {
         {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${process.env.ZAI_API_KEY}`,
+            Authorization: `Bearer ${getAiToken()}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ audio: audioBase64, task: 'transcribe' }),

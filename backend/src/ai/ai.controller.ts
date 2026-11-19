@@ -177,13 +177,16 @@ export class AiController {
         taskType: 'COACH_ADVISOR',
         responseFormat: { type: 'json_object' },
         temperature: 0.4,
-        maxTokens: 3000,
-        timeoutMs: 150_000,
+        // Keep output small enough to finish inside Cloudflare's 100s edge
+        // limit: a long 8-14 milestone prompt overflowed 3000 tokens and the
+        // reasoning model spent >100s retrying malformed/truncated JSON.
+        maxTokens: 4000,
+        timeoutMs: 90_000,
         messages: [
           {
             role: 'system',
             content:
-              'You are an expert IELTS study-plan coach. Design a realistic, progressive plan. Return strictly one JSON object: {"summary": "<2-3 sentence strategy summary>", "milestones": [{"day": <sequential day starting at 1>, "title": "<short imperative task>", "skill": "LISTENING|READING|WRITING|SPEAKING|MOCK", "durationMinutes": <5-120, must fit the student\'s daily time>, "taskDetails": "<concrete instructions naming the exact practice task and what success looks like>"}]}. Rules: prioritise the weakest skill and any skill scoring below target; alternate skills across days; include periodic MOCK checkpoints; day numbers start at 1 with no gaps; produce 8-14 milestones total; every taskDetails must mention concrete IELTS activity types (e.g. "Part 2 cue card", "True/False/Not Given set", "Task 1 chart essay").',
+              'You are an expert IELTS study-plan coach. Design a realistic, progressive plan. Return strictly one JSON object: {"summary": "<2-3 sentence strategy summary>", "milestones": [{"day": <sequential day starting at 1>, "title": "<short imperative task>", "skill": "LISTENING|READING|WRITING|SPEAKING|MOCK", "durationMinutes": <5-120, must fit the student\'s daily time>, "taskDetails": "<one short sentence with a concrete IELTS activity>"}]}. Rules: prioritise the weakest skill; alternate skills across days; day numbers start at 1 with no gaps; produce exactly 5 to 7 milestones; keep each taskDetails under 20 words so the JSON stays compact and complete.',
           },
           { role: 'user', content: `Student profile:\n${context}` },
         ],

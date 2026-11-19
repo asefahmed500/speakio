@@ -1,5 +1,6 @@
 import { StateGraph, Annotation, END } from '@langchain/langgraph';
 import { ChatOpenAI } from '@langchain/openai';
+import { getAiToken } from '../../common/ai-token';
 import { z } from 'zod';
 import { clampToBand } from '../../common/band.utils';
 import { invokeWithBackoff } from '../../common/free-tier-backoff';
@@ -171,7 +172,7 @@ Response format (mandatory): your ENTIRE response must be exactly one JSON objec
 }`;
 
 function buildModel() {
-  const apiKey = process.env.ZAI_API_KEY;
+  const apiKey = getAiToken();
   if (!apiKey) {
     throw new Error('ZAI_API_KEY is not configured');
   }
