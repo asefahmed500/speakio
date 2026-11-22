@@ -257,6 +257,19 @@ export default function ResultPage() {
           </div>
         )}
 
+        {result.status === "NEEDS_REVIEW" && (
+          <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 backdrop-blur-xl flex items-start gap-4">
+            <Clock className="size-6 text-amber-700 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-foreground">Senior Re-evaluation in Progress</h2>
+              <p className="text-xs text-amber-700 leading-relaxed">
+                Your submission was flagged for an additional review pass. This page updates automatically
+                as soon as the final band is published.
+              </p>
+            </div>
+          </div>
+        )}
+
         {result.status === "SUBMITTED" && (
           <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 backdrop-blur-xl space-y-4">
             <div className="flex items-start gap-3.5">
@@ -275,6 +288,11 @@ export default function ResultPage() {
               </p>
             )}
 
+            {result.testSet.skill === "FULL_MOCK" ? (
+              <p className="text-xs text-amber-700">
+                Full mock re-scoring is not available on this deployment. Your answers are safely stored.
+              </p>
+            ) : (
             <Button
               onClick={() => void rescore()}
               disabled={rescoring}
@@ -290,6 +308,7 @@ export default function ResultPage() {
                 </>
               )}
             </Button>
+            )}
           </div>
         )}
 
@@ -352,13 +371,15 @@ export default function ResultPage() {
                   )}
                 </div>
 
-                <Link
-                  href={`/skills/${result.testSet.skill.toLowerCase()}`}
-                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-muted-foreground transition-colors"
-                >
-                  <span>Practice this skill again</span>
-                  <ArrowRight className="size-3.5" />
-                </Link>
+                {["LISTENING", "READING", "WRITING", "SPEAKING"].includes(result.testSet.skill) && (
+                  <Link
+                    href={`/skills/${result.testSet.skill.toLowerCase()}`}
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-muted-foreground transition-colors"
+                  >
+                    <span>Practice this skill again</span>
+                    <ArrowRight className="size-3.5" />
+                  </Link>
+                )}
               </div>
             </div>
 

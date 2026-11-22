@@ -154,6 +154,11 @@ export class TestsController {
     @Req() req: AuthenticatedRequest,
   ) {
     const targetSet = await this.testsService.getForAdmin(id);
+    if (targetSet.skill === SkillType.FULL_MOCK) {
+      throw new BadRequestException(
+        'Full mock sets are composed from skill sections; generate questions into a skill set instead.',
+      );
+    }
     return this.testsService.generateAiQuestions({
       actorId: requireUserId(req),
       skill: targetSet.skill as
@@ -174,9 +179,9 @@ export class TestsController {
   @Delete(':id/questions/:questionId')
   @Roles('ADMIN')
   async deleteQuestion(
-    @Param('id') _id: string,
+    @Param('id') id: string,
     @Param('questionId') questionId: string,
   ) {
-    return this.testsService.deleteQuestion(questionId);
+    return this.testsService.deleteQuestion(id, questionId);
   }
 }

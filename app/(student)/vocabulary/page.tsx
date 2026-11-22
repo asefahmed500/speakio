@@ -166,11 +166,17 @@ export default function VocabularyPage() {
     setRewrites(data.rewrites)
   }
 
+  const copyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+  }, [])
+
   const handleCopyRewrite = async (idx: number, text: string) => {
     try {
       await navigator.clipboard.writeText(text)
       setCopiedIdx(idx)
-      setTimeout(() => setCopiedIdx(null), 1500)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = setTimeout(() => setCopiedIdx(null), 1500)
     } catch {
       window.prompt("Copy:", text)
     }

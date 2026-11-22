@@ -43,9 +43,11 @@ export default function AgentOpsPage() {
   const [detail, setDetail] = useState<AgentRun | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [retryingId, setRetryingId] = useState<string | null>(null)
-  const [retryMessage, setRetryMessage] = useState<string | null>(null)
+  const [retryState, setRetryState] = useState<{ ok: boolean; text: string } | null>(null)
+  const [now, setNow] = useState(0)
 
   const fetchRuns = useCallback(async () => {
+    setNow(Date.now())
     const { data, error: fetchError } = await apiFetch<AgentRun[]>("/scoring/runs")
     if (fetchError || !data) {
       setError(fetchError?.message ?? "Failed to load agent runs.")
@@ -78,21 +80,28 @@ export default function AgentOpsPage() {
     void fetchRuns()
   }
 
+  const detailSeqRef = React.useRef(0)
   const openDetail = async (run: AgentRun) => {
+    const seq = ++detailSeqRef.current
     setDetailLoading(true)
     setDetail(run) // optimistic
     const { data, error: fetchError } = await apiFetch<AgentRun>(`/scoring/runs/${run.id}`)
+    if (seq !== detailSeqRef.current) return
     if (!fetchError && data) setDetail(data)
     setDetailLoading(false)
   }
 
   const retry = async (runId: string) => {
     setRetryingId(runId)
-    setRetryMessage(null)
+    setRetryState(null)
     const { error: retryError } = await apiFetch(`/scoring/runs/${runId}/retry`, { method: "POST", timeoutMs: 0 })
-    setRetryMessage(
-      retryError ? retryError.message : "Run re-executed successfully."
-    )
+    // Track success explicitly — parsing a human-readable message with
+    // .includes("successfully") misreports a 503 deadline as a failure even
+    // though scoring continues and publishes in the background.
+    setRetryState({
+      ok: !retryError,
+      text: retryError ? retryError.message : "Run re-executed successfully.",
+    })
     setRetryingId(null)
     await fetchRuns()
   }
@@ -101,9 +110,12 @@ export default function AgentOpsPage() {
     ? {
         failed: runs.filter((r) => r.status === "FAILED").length,
         completed: runs.filter((r) => r.status === "COMPLETED").length,
-        avgMs: runs.length
-          ? Math.round(runs.reduce((acc, r) => acc + r.durationMs, 0) / runs.length)
-          : 0,
+        avgMs: (() => {
+          const finished = runs.filter((r) => r.durationMs > 0)
+          return finished.length
+            ? Math.round(finished.reduce((acc, r) => acc + r.durationMs, 0) / finished.length)
+            : 0
+        })(),
         tokens: runs.reduce((acc, r) => acc + r.costTokens, 0),
       }
     : null
@@ -174,16 +186,16 @@ export default function AgentOpsPage() {
               <Stat label="Tokens used" value={totals.tokens.toLocaleString()} />
             </div>
 
-            {retryMessage && (
+            {retryState && (
               <p
                 role="status"
                 className={`rounded-lg border px-3 py-2 text-xs ${
-                  retryMessage.includes("successfully")
+                  retryState.ok
                     ? "border-success/30 bg-success/10 text-success"
                     : "border-destructive/30 bg-destructive/10 text-destructive"
                 }`}
               >
-                {retryMessage}
+                {retryState.text}
               </p>
             )}
 
@@ -214,7 +226,10 @@ export default function AgentOpsPage() {
                     <Button variant="outline" size="sm" onClick={() => void openDetail(run)} className="cursor-pointer">
                       Details
                     </Button>
-                    {run.status === "FAILED" && (
+                    {(run.status === "FAILED" ||
+                      (run.status === "RUNNING" &&
+                        run.createdAt &&
+                        now - new Date(run.createdAt).getTime() > 5 * 60 * 1000)) && (
                       run.agentType === "WRITING_SCORING" && run.attemptId ? (
                         <Button
                           variant="outline"

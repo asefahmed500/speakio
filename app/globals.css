@@ -133,57 +133,49 @@
         0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-/* Editorial italic accent (Playfair Display) — the human/emotional counterpoint
-   to the technical Inter/Geist voice. Applied to one or two words per heading. */
 @utility font-accent {
     font-family: var(--font-serif);
     font-style: italic;
     font-weight: 400;
 }
 
-/* Continuous ambient marquee — linear timing, never spring physics. */
 @keyframes marquee {
-    0% {
-        transform: translateX(0);
-    }
-    100% {
-        transform: translateX(-50%);
-    }
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
 }
+@utility animate-marquee { animation: marquee 35s linear infinite; }
 
-@utility animate-marquee {
-    animation: marquee 35s linear infinite;
-}
-
-/* Hero ambient media — slow cinematic drift + speech-equalizer light. */
 @keyframes hero-drift {
-    from {
-        transform: translate3d(-2.5%, -1.5%, 0) scale(1);
-    }
-    to {
-        transform: translate3d(2.5%, 2%, 0) scale(1.06);
-    }
+    from { transform: translate3d(-2.5%, -1.5%, 0) scale(1); }
+    to { transform: translate3d(2.5%, 2%, 0) scale(1.06); }
 }
-
 @keyframes hero-eq {
-    from {
-        transform: scaleY(0.45);
-    }
-    to {
-        transform: scaleY(1.15);
-    }
+    from { transform: scaleY(0.45); }
+    to { transform: scaleY(1.15); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .animate-marquee {
-        animation: none;
-    }
+/* ------------------------------------------------------------------ */
+/* Motion layer — restrained, deliberate.                              */
+/* ------------------------------------------------------------------ */
+@keyframes app-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+/* App surface entrance, applied via CSS so it cannot upset hydration. */
+[data-slot="sidebar-inset"] { animation: app-fade-in 600ms ease both; }
+
+button, a, [role="button"], input, select, textarea {
+    transition-property: color, background-color, border-color, opacity, transform, box-shadow, filter;
+    transition-duration: 180ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+button:active:not(:disabled), [role="button"]:active:not([aria-disabled="true"]) {
+    transform: scale(0.98);
 }
 
 @layer base {
-  *, *::before, *::after {
-    @apply border-border outline-ring/50;
-  }
+  *, *::before, *::after { @apply border-border outline-ring/50; }
   body {
     background-color: var(--background);
     color: var(--foreground);
@@ -194,44 +186,16 @@
     font-weight: 400;
     letter-spacing: 0;
   }
-  h1, .h1 {
-    font-weight: 600 !important;
-    letter-spacing: -0.02em !important;
-  }
-  h2, .h2 {
-    font-weight: 600 !important;
-    letter-spacing: -0.01em !important;
-  }
-  h3, .h3 {
-    font-weight: 600 !important;
-    letter-spacing: -0.01em !important;
-  }
-  h4, h5, h6, .h4, .h5, .h6 {
-    font-weight: 600 !important;
-    letter-spacing: -0.005em !important;
-  }
-  /* Labels, buttons, navigation: weight 500 per design system */
-  label, nav a, nav button, .subtitle {
-    font-weight: 500;
-  }
-  /* Enforce max font weight 600 across UI per design system guidelines */
-  .font-bold {
-    font-weight: 600 !important;
-  }
-  .font-semibold {
-    font-weight: 600 !important;
-  }
-  .font-medium {
-    font-weight: 500 !important;
-  }
-  .font-normal {
-    font-weight: 400 !important;
-  }
-  html {
-    @apply font-sans;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
+  h1, .h1 { font-weight: 600 !important; letter-spacing: -0.02em !important; }
+  h2, .h2 { font-weight: 600 !important; letter-spacing: -0.01em !important; }
+  h3, .h3 { font-weight: 600 !important; letter-spacing: -0.01em !important; }
+  h4, h5, h6, .h4, .h5, .h6 { font-weight: 600 !important; letter-spacing: -0.005em !important; }
+  label, nav a, nav button, .subtitle { font-weight: 500; }
+  .font-bold { font-weight: 600 !important; }
+  .font-semibold { font-weight: 600 !important; }
+  .font-medium { font-weight: 500 !important; }
+  .font-normal { font-weight: 400 !important; }
+  html { @apply font-sans; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;

@@ -74,6 +74,7 @@ async function request<T>(
   allowRefresh: boolean
 ): Promise<ApiResult<T>> {
   const { json, headers, timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = init
+  const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : null
   const signal =
     timeoutMs > 0
       ? AbortSignal.any([rest.signal, AbortSignal.timeout(timeoutMs)].filter(Boolean) as AbortSignal[])
@@ -108,7 +109,12 @@ async function request<T>(
       // own 401 states and must not trigger a redirect.
       if (res.status === 401 && !path.startsWith("/auth/")) {
         if (allowRefresh && (await tryRefreshSession())) {
-          return request<T>(path, init, false)
+          // Preserve the original deadline across the silent-refresh retry;
+          // otherwise one call could take 2× the documented timeout.
+          const remaining = deadline ? deadline - Date.now() : timeoutMs
+          if (remaining > 0 || deadline === null) {
+            return request<T>(path, { ...init, timeoutMs: remaining }, false)
+          }
         }
         redirectToLogin()
       }
@@ -127,26 +133,23 @@ async function request<T>(
     }
     return { data: body as T, error: null, networkError: false }
   } catch (err) {
-    if (err instanceof DOMException && err.name === "TimeoutError") {
-      return {
-        data: null,
-        error: new ApiError(0, "The request timed out. Check your connection and try again."),
-        networkError: true,
-      }
-    }
-    if (err instanceof DOMException && err.name === "AbortError") {
-      return {
-        data: null,
-        error: new ApiError(0, "Request cancelled."),
-        networkError: true,
-      }
-    }
     return {
       data: null,
-      error: new ApiError(0, "Unable to reach the Speakio service. Check your connection and try again."),
+      error: classifyNetworkError(err),
       networkError: true,
     }
   }
+}
+
+/** Shared timeout/abort classification for JSON and binary requests. */
+function classifyNetworkError(err: unknown): ApiError {
+  if (err instanceof DOMException && err.name === "TimeoutError") {
+    return new ApiError(0, "The request timed out. Check your connection and try again.")
+  }
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return new ApiError(0, "Request cancelled.")
+  }
+  return new ApiError(0, "Unable to reach the Speakio service. Check your connection and try again.")
 }
 
 /**
@@ -165,4 +168,44 @@ export async function apiFetch<T>(
   init: RequestInit & { json?: unknown; timeoutMs?: number } = {}
 ): Promise<ApiResult<T>> {
   return request<T>(path, init, true)
+}
+
+/**
+ * Authenticated binary download (certificate PDFs). Shares the same silent
+ * refresh + retry contract as apiFetch, but returns a Blob instead of JSON.
+ */
+export async function apiFetchBlob(
+  path: string,
+  allowRefresh = true
+): Promise<{ blob: Blob | null; error: ApiError | null; networkError: boolean }> {
+  try {
+    const res = await fetch(`${API_URL}${path}`, {
+      credentials: "include",
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    })
+    if (res.status === 401 && !path.startsWith("/auth/")) {
+      if (allowRefresh && (await tryRefreshSession())) {
+        return apiFetchBlob(path, false)
+      }
+      redirectToLogin()
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      return {
+        blob: null,
+        error: new ApiError(
+          res.status,
+          extractMessage(body, `Download failed (${res.status})`)
+        ),
+        networkError: false,
+      }
+    }
+    return { blob: await res.blob(), error: null, networkError: false }
+  } catch (err) {
+    return {
+      blob: null,
+      error: classifyNetworkError(err),
+      networkError: true,
+    }
+  }
 }

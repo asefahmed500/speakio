@@ -48,10 +48,11 @@ interface AttemptRecord {
   status: "IN_PROGRESS" | "SUBMITTED" | "SCORING" | "NEEDS_REVIEW" | "COMPLETED"
   timeRemainingSeconds: number | null
   answersJson: Record<string, string> | null
+  questionIdsJson: string[] | null
   resumed?: boolean
 }
 
-type Phase = "loading" | "not-found" | "error" | "ready" | "submitting"
+type Phase = "loading" | "not-found" | "unavailable" | "error" | "ready" | "submitting"
 
 function formatClock(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60)
@@ -74,19 +75,27 @@ export default function TakeTestPage() {
   const [draftRestored, setDraftRestored] = useState(false)
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle")
 
-  // Sound check modal state
+  // Sound check modal state. `examStarted` is latched on first readiness —
+  // reopening the Audio Check modal must NEVER pause the timer or autosave.
   const [showSoundCheck, setShowSoundCheck] = useState(true)
+  const [examStarted, setExamStarted] = useState(false)
 
   // Navigation & reading tools
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
-  const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set())
   const [readingFontSize, setReadingFontSize] = useState<"normal" | "large">("normal")
+
+  // Speaking: track which question is active and which have a recording.
+  const [activeSpeakingQuestionId, setActiveSpeakingQuestionId] = useState<string>("")
+  const [recordedSpeakingIds, setRecordedSpeakingIds] = useState<Set<string>>(new Set())
 
   const examStore = useExamStore
   const setDraftAnswer = examStore((s) => s.setAnswer)
   const setEssayText = examStore((s) => s.setEssayText)
   const clearExamDraft = examStore((s) => s.clearExamDraft)
   const markSaved = examStore((s) => s.markSaved)
+  const flaggedIdsArr = examStore((s) => s.flaggedIds)
+  const toggleFlagInDraft = examStore((s) => s.toggleFlag)
+  const flaggedIds = new Set(flaggedIdsArr)
 
   const answersRef = useRef(answers)
   const secondsRef = useRef(secondsLeft)
@@ -94,9 +103,6 @@ export default function TakeTestPage() {
   const submittingRef = useRef(false)
   const autoSubmitRef = useRef(false)
   const autosavingRef = useRef(false)
-
-  // Speaking state (for submission compatibility)
-  const [speakingRecorded, setSpeakingRecorded] = useState(false)
 
   useEffect(() => {
     answersRef.current = answers
@@ -108,7 +114,7 @@ export default function TakeTestPage() {
     attemptRef.current = attempt
   }, [attempt])
 
-  const autosave = useCallback(async () => {
+  const autosave = useCallback(async (overrideAnswers?: Record<string, string>) => {
     const currentAttempt = attemptRef.current
     if (!currentAttempt || submittingRef.current || autosavingRef.current) return
     autosavingRef.current = true
@@ -118,7 +124,7 @@ export default function TakeTestPage() {
         method: "PATCH",
         timeoutMs: 0,
         json: {
-          answers: answersRef.current,
+          answers: overrideAnswers ?? answersRef.current,
           timeRemainingSeconds: secondsRef.current ?? undefined,
         },
       })
@@ -156,7 +162,10 @@ export default function TakeTestPage() {
 
       if (error || !data) {
         submittingRef.current = false
-        if (error && (error.status === 409 || error.status === 404 || error.status === 503)) {
+        // Only a genuine conflict means the attempt is already finalized.
+        // A 503 (service down) or 404 (attempt missing) must stay here with an
+        // actionable message instead of bouncing to a page that will also fail.
+        if (error?.status === 409) {
           clearExamDraft()
           router.push(`/results/${currentAttempt.id}`)
           return
@@ -183,7 +192,7 @@ export default function TakeTestPage() {
     let cancelled = false
     async function bootstrap() {
       if (!testId) return
-      examStore.persist.rehydrate()
+      await examStore.persist.rehydrate()
 
       const { data: testData, error: testError } = await apiFetch<TestDetail>(`/tests/${testId}`)
       if (cancelled) return
@@ -194,6 +203,10 @@ export default function TakeTestPage() {
       if (testError || !testData) {
         setLoadError(testError?.message ?? "Failed to load the test.")
         setPhase("error")
+        return
+      }
+      if (testData.skill === "FULL_MOCK") {
+        setPhase("unavailable")
         return
       }
 
@@ -217,17 +230,36 @@ export default function TakeTestPage() {
       const draft = examStore.getState()
       const draftMatches = draft.attemptId === attemptData.id
       const draftMap = draftAnswersToMap(draft)
+      // Legacy fallback for drafts saved before essays were keyed by question:
+      // only fill essay questions that have no per-question answer.
       if (draftMatches && draft.essayText) {
-        const essayQuestionId = testData.questions.find((q) => q.questionType === "ESSAY")?.id
-        if (essayQuestionId) draftMap[essayQuestionId] = draft.essayText
+        for (const q of testData.questions.filter((x) => x.questionType === "ESSAY")) {
+          if (!draftMap[q.id]) draftMap[q.id] = draft.essayText
+        }
       }
       const merged = draftMatches ? { ...serverAnswers, ...draftMap } : serverAnswers
 
-      setTest(testData)
+      // Grade against the same immutable question snapshot the backend uses —
+      // an adaptive pool can be larger than one attempt's question count.
+      const snapshot = Array.isArray(attemptData.questionIdsJson)
+        ? attemptData.questionIdsJson
+        : null
+      const servedQuestions = snapshot
+        ? testData.questions.filter((q) => snapshot.includes(q.id))
+        : testData.questions
+      setTest({ ...testData, questions: servedQuestions })
       setAttempt(attemptData)
       setAnswers(merged)
       setSecondsLeft(attemptData.timeRemainingSeconds ?? testData.timeLimitMinutes * 60)
       setDraftRestored(draftMatches && Object.keys(draftMap).length > 0)
+      setActiveSpeakingQuestionId(servedQuestions.find((q) => q.questionType === "SPEAKING_PROMPT")?.id ?? "")
+      setRecordedSpeakingIds(
+        new Set(
+          servedQuestions
+            .filter((q) => (merged[q.id] ?? "").startsWith("data:audio"))
+            .map((q) => q.id)
+        )
+      )
       examStore.setState({ attemptId: attemptData.id })
       setPhase("ready")
     }
@@ -237,10 +269,11 @@ export default function TakeTestPage() {
     }
   }, [testId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Timer tick (starts once sound check is accepted)
+  // Timer tick — starts when the exam is first accepted and runs continuously,
+  // including while the Audio Check modal is reopened mid-exam.
   const hasTimer = secondsLeft !== null
   useEffect(() => {
-    if (phase !== "ready" || !hasTimer || showSoundCheck) return
+    if (phase !== "ready" || !hasTimer || !examStarted) return
     const interval = setInterval(() => {
       const prev = secondsRef.current
       if (prev === null) return
@@ -256,14 +289,14 @@ export default function TakeTestPage() {
       setSecondsLeft(prev - 1)
     }, 1000)
     return () => clearInterval(interval)
-  }, [phase, hasTimer, showSoundCheck, doSubmit])
+  }, [phase, hasTimer, examStarted, doSubmit])
 
-  // Periodic autosave
+  // Periodic autosave — also independent of the modal.
   useEffect(() => {
-    if (phase !== "ready" || showSoundCheck) return
+    if (phase !== "ready" || !examStarted) return
     const interval = setInterval(() => void autosave(), 15_000)
     return () => clearInterval(interval)
-  }, [phase, showSoundCheck, autosave])
+  }, [phase, examStarted, autosave])
 
   // Warn before leaving mid-exam
   useEffect(() => {
@@ -281,40 +314,52 @@ export default function TakeTestPage() {
     const isEssay = test?.questions.some((q) => q.id === questionId && q.questionType === "ESSAY")
     if (isEssay) {
       setEssayText(value)
+      // Persist each essay under its own question id so multi-task sets and
+      // clearing an essay to "" survive a refresh.
+      setDraftAnswer(questionId, value)
     } else if (!isTooLargeForDraft) {
       setDraftAnswer(questionId, value)
     }
   }
 
   const toggleFlag = (questionId: string) => {
-    setFlaggedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(questionId)) next.delete(questionId)
-      else next.add(questionId)
-      return next
-    })
+    toggleFlagInDraft(questionId)
+  }
+
+  const selectQuestion = (index: number) => {
+    setCurrentQuestionIndex(index)
+    const questionId = test?.questions[index]?.id
+    if (questionId) {
+      document.getElementById(`question-card-${questionId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      })
+    }
   }
 
   // Answered counts and validation
   const answeredCount = test
     ? test.questions.filter((q) => (answers[q.id] ?? "").trim().length > 0).length
     : 0
-  const essayQuestion = test?.questions.find((q) => q.questionType === "ESSAY")
-  const essayText = essayQuestion ? (answers[essayQuestion.id] ?? "") : ""
+  const essayQuestions = test?.questions.filter((q) => q.questionType === "ESSAY") ?? []
+  const essayText = essayQuestions.map((q) => answers[q.id] ?? "").join("\n")
   const essayWordCount = essayText.trim() ? essayText.trim().split(/\s+/).filter(Boolean).length : 0
   const timeExpired = secondsLeft === 0
   const isFullMock = test?.skill === "FULL_MOCK"
-  const firstQuestionId = test?.questions[0]?.id ?? ""
-  const firstAnswer = answers[firstQuestionId] ?? ""
-  const typedSpeakingText =
-    test?.skill === "SPEAKING" &&
-    firstAnswer.length > 0 &&
-    !firstAnswer.startsWith("data:audio")
-      ? firstAnswer
-      : ""
+  const isAudioAnswer = (value: string | undefined) => Boolean(value?.startsWith("data:audio"))
+  const typedAnswerForActive = isAudioAnswer(answers[activeSpeakingQuestionId])
+    ? ""
+    : (answers[activeSpeakingQuestionId] ?? "")
+  const typedSpeakingText = test
+    ? test.questions
+        .map((q) => answers[q.id] ?? "")
+        .filter((value) => value.length > 0 && !value.startsWith("data:audio"))
+        .join("\n")
+    : ""
   const typedSpeakingWords = typedSpeakingText.trim()
     ? typedSpeakingText.trim().split(/\s+/).filter(Boolean).length
     : 0
+  const hasRecordedSpeaking = recordedSpeakingIds.size > 0
 
   const isSubmitting = phase === "submitting"
 
@@ -325,7 +370,7 @@ export default function TakeTestPage() {
         (test.skill === "WRITING"
           ? essayWordCount >= 20
           : test.skill === "SPEAKING"
-            ? speakingRecorded || typedSpeakingWords >= 40
+            ? hasRecordedSpeaking || typedSpeakingWords >= 40
             : answeredCount > 0)))
 
   if (phase === "loading" || phase === "submitting") {
@@ -368,6 +413,27 @@ export default function TakeTestPage() {
     )
   }
 
+  if (phase === "unavailable") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground p-6">
+        <div className="max-w-md text-center space-y-4">
+          <AlertCircle className="size-10 text-muted-foreground mx-auto" aria-hidden />
+          <h1 className="text-xl font-semibold text-foreground">Full Mock Test Not Available</h1>
+          <p className="text-sm text-muted-foreground">
+            The full mock test engine is not enabled on this deployment. Please take the
+            individual Listening, Reading, Writing and Speaking tests instead.
+          </p>
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-2.5 text-sm font-medium text-black hover:bg-neutral-200"
+          >
+            Back to Dashboard
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
   if (phase === "error" || !test || !attempt) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background text-foreground p-6">
@@ -403,7 +469,10 @@ export default function TakeTestPage() {
         title={test.title}
         timeLimitMinutes={test.timeLimitMinutes}
         questionCount={test.questions.length}
-        onReady={() => setShowSoundCheck(false)}
+        onReady={() => {
+          setShowSoundCheck(false)
+          setExamStarted(true)
+        }}
       />
 
       {/* Official IELTS Computer-Delivered Header */}
@@ -458,8 +527,8 @@ export default function TakeTestPage() {
             </span>
           )}
           {saveState === "saved" && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-mono whitespace-nowrap">
-              <span className="size-1.5 rounded-full bg-emerald-600" /> Saved
+            <span className="inline-flex items-center gap-1 text-[11px] text-black font-mono whitespace-nowrap">
+              <span className="size-1.5 rounded-full bg-black" /> Saved
             </span>
           )}
           {saveState === "error" && (
@@ -471,7 +540,13 @@ export default function TakeTestPage() {
       </header>
 
       {/* Main Examination Canvas */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main
+        className={`flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 pt-6 space-y-6 ${
+          !isSpeaking && !isWriting && test.questions.length > 1
+            ? "pb-28 sm:pb-24"
+            : "pb-6"
+        }`}
+      >
         {draftRestored && (
           <div className="rounded-xl border border-primary/30 bg-muted text-foreground text-xs px-4 py-2.5 flex items-center gap-2">
             <CheckCircle2 className="size-4 shrink-0 text-muted-foreground" />
@@ -494,12 +569,16 @@ export default function TakeTestPage() {
           <>
             <AiSpeakingExaminer
               questions={test.questions}
-              onRecordingComplete={(audioJoined) => {
-                const firstQ = test.questions[0]
-                if (firstQ) {
-                  setAnswer(firstQ.id, audioJoined)
+              recordedQuestionIds={recordedSpeakingIds}
+              onActiveQuestionChange={setActiveSpeakingQuestionId}
+              onRecordingComplete={(audioJoined, _duration, questionId) => {
+                if (questionId) {
+                  setAnswer(questionId, audioJoined)
+                  setRecordedSpeakingIds((prev) => new Set(prev).add(questionId))
+                  // Audio is too large for the localStorage draft — persist it
+                  // to the server immediately instead of waiting 15s.
+                  void autosave({ ...answersRef.current, [questionId]: audioJoined })
                 }
-                setSpeakingRecorded(true)
               }}
             />
             <div className="rounded-2xl border border-border bg-surface-subtle p-5 space-y-3">
@@ -513,11 +592,18 @@ export default function TakeTestPage() {
               </div>
               <Textarea
                 aria-label="Typed speaking response"
-                value={typedSpeakingText}
+                value={typedAnswerForActive}
                 onChange={(event) => {
-                  const firstQ = test.questions[0]
-                  if (firstQ) setAnswer(firstQ.id, event.target.value)
-                  setSpeakingRecorded(false)
+                  if (activeSpeakingQuestionId) {
+                    // Typing replaces any recording for this question.
+                    setRecordedSpeakingIds((prev) => {
+                      if (!prev.has(activeSpeakingQuestionId)) return prev
+                      const next = new Set(prev)
+                      next.delete(activeSpeakingQuestionId)
+                      return next
+                    })
+                    setAnswer(activeSpeakingQuestionId, event.target.value)
+                  }
                 }}
                 placeholder="Write the answer you would have spoken…"
                 className="min-h-[160px] border-border bg-surface-subtle text-sm text-foreground placeholder:text-foreground/30"
@@ -618,6 +704,7 @@ export default function TakeTestPage() {
                 {test.questions.map((q, idx) => (
                   <div
                     key={q.id}
+                    id={`question-card-${q.id}`}
                     className={`rounded-2xl border p-5 transition-all ${
                       idx === currentQuestionIndex
                         ? "border-primary/40 bg-surface-subtle shadow-lg "
@@ -643,7 +730,7 @@ export default function TakeTestPage() {
                                 htmlFor={optId}
                                 className={`flex items-center gap-3 rounded-xl border p-3 text-xs cursor-pointer transition-all ${
                                   selected
-                                    ? "border-primary bg-cyan-400/15 text-foreground font-medium"
+                                    ? "border-black bg-black/5 text-foreground font-medium"
                                     : "border-border bg-surface-subtle text-muted-foreground hover:bg-surface-subtle hover:text-foreground"
                                 }`}
                               >
@@ -718,6 +805,7 @@ export default function TakeTestPage() {
               {test.questions.map((q, idx) => (
                 <div
                   key={q.id}
+                  id={`question-card-${q.id}`}
                   className="rounded-2xl border border-border bg-surface-subtle p-5 backdrop-blur-xl space-y-3"
                 >
                   <p className="text-sm font-medium text-foreground/95 leading-relaxed">
@@ -780,11 +868,11 @@ export default function TakeTestPage() {
                   ? "Requires at least 20 words to proceed to AI scoring."
                   : "All essay criteria are evaluated by autonomous LangGraph agents."
                 : isSpeaking
-                  ? speakingRecorded
-                    ? "Speech recording captured. Submit for free AI review."
+                  ? hasRecordedSpeaking
+                    ? "At least one response recorded. Submit for free AI review."
                     : typedSpeakingWords >= 40
                       ? "Typed response ready for free AI review."
-                      : "Record your speech, or type at least 40 words for a free text-based review."
+                      : "Record your answer to any question, or type at least 40 words for a free text-based review."
                   : `${answeredCount} of ${test.questions.length} questions completed.`}
             </p>
           </div>
@@ -812,7 +900,7 @@ export default function TakeTestPage() {
           answers={answers}
           questionIds={questionIds}
           flaggedIds={flaggedIds}
-          onSelectIndex={setCurrentQuestionIndex}
+          onSelectIndex={selectQuestion}
           onToggleFlag={toggleFlag}
         />
       )}

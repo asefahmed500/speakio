@@ -105,12 +105,16 @@ export class DashboardService {
 
     // Bounded history for the chart: an unbounded scan grows with every
     // attempt and has no place in a request path.
-    const bands = await this.prisma.score.findMany({
-      where: { attempt: { userId }, skill },
-      orderBy: { createdAt: 'asc' },
-      take: 200,
-      select: { bandScore: true, createdAt: true },
-    });
+    // Take the NEWEST 200, then restore chronological order for the chart.
+    // Ascending + take used to freeze the chart at the first 200 scores ever.
+    const bands = (
+      await this.prisma.score.findMany({
+        where: { attempt: { userId }, skill },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+        select: { bandScore: true, createdAt: true },
+      })
+    ).reverse();
 
     return {
       latestBand: latestBand?.bandScore ?? null,

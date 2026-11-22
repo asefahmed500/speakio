@@ -242,6 +242,12 @@ export function ExamSoundCheckModal({
                 if (micStream) {
                   micStream.getTracks().forEach((t) => t.stop())
                 }
+                // The stream is intentionally released here — don't leave the
+                // UI claiming "Mic Active" when the modal is reopened.
+                setMicStream(null)
+                setMicTested(skill !== "SPEAKING")
+                setMicVolume(0)
+                micVisualizerRef.current = null
                 onReady()
               }}
               disabled={!canProceed}

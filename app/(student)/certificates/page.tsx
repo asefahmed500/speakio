@@ -15,7 +15,7 @@ import {
 } from "lucide-react"
 import { Button, ButtonLink } from "@/components/ui/button"
 import { ConfirmationModal } from "@/components/ui/confirmation-modal"
-import { apiFetch, API_URL } from "@/lib/api-client"
+import { apiFetch, apiFetchBlob } from "@/lib/api-client"
 
 interface Certificate {
   id: string
@@ -28,6 +28,14 @@ interface Certificate {
   revocationReason: string | null
 }
 
+interface Eligibility {
+  eligible: boolean
+  completedCount: number
+  requiredCount: number
+  skills: Array<{ skill: string; completed: boolean; band: number | null }>
+  missingSkills: string[]
+}
+
 export default function CertificatesPage() {
   const [certificates, setCertificates] = useState<Certificate[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -38,6 +46,7 @@ export default function CertificatesPage() {
   const [revokeError, setRevokeError] = useState<string | null>(null)
   const [issuing, setIssuing] = useState(false)
   const [issueError, setIssueError] = useState<string | null>(null)
+  const [eligibility, setEligibility] = useState<Eligibility | null>(null)
   // Download/revoke failures must not clobber the list-fetch error state —
   // the top-level error's "Retry" button refetches the list, not the action.
   const [actionError, setActionError] = useState<string | null>(null)
@@ -54,20 +63,28 @@ export default function CertificatesPage() {
     setLoading(false)
   }, [])
 
+  const fetchEligibility = useCallback(async () => {
+    const { data } = await apiFetch<Eligibility>("/certificates/eligibility")
+    setEligibility(data)
+  }, [])
+
   useEffect(() => {
     // Deferred to a microtask so the effect body never mutates state synchronously.
     let active = true
     void Promise.resolve().then(() => {
-      if (active) return fetchCertificates()
+      if (!active) return
+      void fetchCertificates()
+      void fetchEligibility()
     })
     return () => {
       active = false
     }
-  }, [fetchCertificates])
+  }, [fetchCertificates, fetchEligibility])
 
   const retry = () => {
     setLoading(true)
     void fetchCertificates()
+    void fetchEligibility()
   }
 
   const handleCopy = async (cert: Certificate) => {
@@ -86,18 +103,15 @@ export default function CertificatesPage() {
     setDownloadingId(cert.id)
     setActionError(null)
     try {
-      const res = await fetch(`${API_URL}/certificates/${cert.id}/pdf`, {
-        credentials: "include",
-      })
-      if (!res.ok) {
+      const { blob, error: downloadError } = await apiFetchBlob(`/certificates/${cert.id}/pdf`)
+      if (!blob || downloadError) {
         setActionError(
-          res.status === 409
+          downloadError?.status === 409
             ? "PDF download is unavailable for revoked certificates."
             : "Failed to generate the PDF. Please try again.",
         )
         return
       }
-      const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
@@ -137,9 +151,36 @@ export default function CertificatesPage() {
       setIssueError(issueErr.message)
     } else {
       await fetchCertificates()
+      await fetchEligibility()
     }
     setIssuing(false)
   }
+
+  const issueButton = (
+    <>
+      <Button onClick={() => void handleIssue()} disabled={issuing} className="cursor-pointer">
+        {issuing ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> Checking eligibility…
+          </>
+        ) : (
+          <>
+            <Award className="mr-2 h-4 w-4" aria-hidden /> Issue new certificate
+          </>
+        )}
+      </Button>
+      {issueError && (
+        <p role="alert" className="text-xs text-warning bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
+          {issueError}
+        </p>
+      )}
+      {actionError && (
+        <p role="alert" className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
+          {actionError}
+        </p>
+      )}
+    </>
+  )
 
   return (
     <div className="flex-1 bg-surface-subtle">
@@ -181,35 +222,40 @@ export default function CertificatesPage() {
                 listening, reading, writing and speaking.
               </p>
             </div>
-            <ButtonLink className="cursor-pointer" href="/skills/listening">
-              Start practising <ArrowRight className="ml-2 h-3.5 w-3.5" aria-hidden />
-            </ButtonLink>
+            {eligibility && (
+              <div className="mx-auto w-full max-w-md rounded-lg border border-border bg-surface-subtle p-3 text-left">
+                <p className="text-xs font-medium mb-2">
+                  {eligibility.completedCount} of {eligibility.requiredCount} skills complete
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {eligibility.skills.map((s) => (
+                    <span
+                      key={s.skill}
+                      className={`rounded-none border px-2 py-0.5 text-[10px] font-medium ${
+                        s.completed
+                          ? "border-success/30 bg-success/10 text-success"
+                          : "border-border text-muted-foreground"
+                      }`}
+                    >
+                      {s.skill.charAt(0) + s.skill.slice(1).toLowerCase()}
+                      {s.completed && s.band != null ? ` · ${s.band.toFixed(1)}` : ""}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {issueButton}
+              <ButtonLink className="cursor-pointer" href="/skills/listening">
+                Start practising <ArrowRight className="ml-2 h-3.5 w-3.5" aria-hidden />
+              </ButtonLink>
+            </div>
           </div>
         )}
 
         {!loading && !error && certificates && certificates.length > 0 && (
           <div className="space-y-4">
-            <Button onClick={() => void handleIssue()} disabled={issuing} className="cursor-pointer">
-              {issuing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> Checking eligibility…
-                </>
-              ) : (
-                <>
-                  <Award className="mr-2 h-4 w-4" aria-hidden /> Issue new certificate
-                </>
-              )}
-            </Button>
-            {issueError && (
-              <p role="alert" className="text-xs text-warning bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
-                {issueError}
-              </p>
-            )}
-            {actionError && (
-              <p role="alert" className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
-                {actionError}
-              </p>
-            )}
+            {issueButton}
 
             {certificates.map((cert) => {
               const isRevoked = cert.status !== "ACTIVE"

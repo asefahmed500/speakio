@@ -1,7 +1,8 @@
 "use client"
 
 import React from "react"
-import { ArrowRight } from "lucide-react"
+import Link from "next/link"
+import { ArrowRight, Check, ShieldCheck } from "lucide-react"
 import { ButtonLink } from "@/components/ui/button"
 import { AnimatedWords, StaggerContainer, StaggerItem } from "@/components/landing/motion"
 
@@ -31,11 +32,9 @@ function VoicePortrait() {
         </linearGradient>
       </defs>
       <rect width="320" height="240" fill="url(#tp-paper)" />
-      {/* Soft concentric voice arcs */}
       {[70, 110, 150].map((r) => (
         <circle key={r} cx="160" cy="240" r={r} fill="none" stroke="#2B4C7E" strokeOpacity="0.14" strokeWidth="1" />
       ))}
-      {/* Waveform */}
       <g fill="#2B4C7E">
         {bars.map(([x, h], i) => (
           <rect
@@ -59,22 +58,31 @@ function VoicePortrait() {
   )
 }
 
+const PROOF_POINTS = [
+  "Every band is scored against the four published IELTS criteria",
+  "Writing and speaking are reviewed by a second AI pass before publishing",
+  "Each certificate carries a code anyone can verify without an account",
+]
+
+/**
+ * Product-fact section (formerly a fabricated testimonial). All statements
+ * below describe behaviour that is actually implemented in the app.
+ */
 export function Testimonials() {
   return (
-    <section id="testimonials" className="bg-white py-20 sm:py-28">
+    <section id="verify" className="bg-white py-20 sm:py-28">
       <StaggerContainer className="mx-auto grid max-w-6xl grid-cols-1 gap-10 px-4 sm:px-6 lg:grid-cols-[1fr_1.15fr] lg:gap-16">
-        {/* LEFT — story, CTA, visual */}
         <div className="flex flex-col">
           <StaggerItem>
             <h2 className="font-display text-3xl leading-[1.12] font-normal tracking-[-0.02em] text-neutral-900 sm:text-4xl">
-              Speakio changed{" "}
-              <span className="font-accent">how I prepare</span>
+              Honest scores,{" "}
+              <span className="font-accent">verifiable proof</span>
             </h2>
           </StaggerItem>
           <StaggerItem>
             <p className="mt-4 max-w-md text-sm leading-relaxed text-neutral-500">
-              Amara balanced a full-time job with preparation — four months, one
-              adaptive plan, and zero surprises on exam day.
+              Speakio is built around the four IELTS skills, the same assessment criteria
+              examiners use, and a completion certificate you can prove is real.
             </p>
           </StaggerItem>
           <StaggerItem>
@@ -82,7 +90,7 @@ export function Testimonials() {
               href="/register"
               className="mt-6 h-12 cursor-pointer self-start rounded-2xl bg-black px-6 text-sm font-medium text-white hover:bg-neutral-800"
             >
-              Start your story
+              Create your account
               <ArrowRight className="ml-1 size-4" aria-hidden />
             </ButtonLink>
           </StaggerItem>
@@ -91,7 +99,6 @@ export function Testimonials() {
             <div className="h-[280px] overflow-hidden rounded-2xl sm:h-[351px]">
               <VoicePortrait />
             </div>
-            {/* Brand block — enters slightly after the visual (stagger order). */}
             <div className="mt-4 rounded-2xl bg-[#F1F0EF] px-6 py-7 text-center">
               <p className="font-display text-sm font-bold tracking-[0.3em] text-neutral-900">
                 SPEAKIO
@@ -103,7 +110,6 @@ export function Testimonials() {
           </StaggerItem>
         </div>
 
-        {/* RIGHT — large quote + author. Never centered. */}
         <div className="flex flex-col justify-center">
           <StaggerItem>
             <blockquote className="text-2xl leading-[1.35] font-normal tracking-[-0.01em] text-neutral-900 sm:text-[32px]">
@@ -112,16 +118,31 @@ export function Testimonials() {
                 stagger={0.04}
                 duration={0.35}
                 initialY={6}
-                text="“The band I scored matched Speakio's prediction almost exactly. I walked into test day calm, because I already knew what an examiner would say about my writing.”"
+                text="Practice under exam conditions, see where you actually stand, and finish with a certificate that can be checked by anyone."
               />
             </blockquote>
           </StaggerItem>
           <StaggerItem>
-            <div className="mt-8">
-              <p className="font-accent text-xl text-neutral-900">Amara Osei</p>
-              <p className="mt-1 text-sm text-neutral-900/50">
-                Band 8.0 overall · Verified certificate holder
-              </p>
+            <ul className="mt-8 space-y-3">
+              {PROOF_POINTS.map((point) => (
+                <li key={point} className="flex items-start gap-3 text-sm text-neutral-600">
+                  <Check className="mt-0.5 size-4 shrink-0 text-neutral-900" aria-hidden />
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+          </StaggerItem>
+          <StaggerItem>
+            <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-neutral-200 pt-6">
+              <span className="flex items-center gap-2 text-xs font-medium text-neutral-900">
+                <ShieldCheck className="size-4" aria-hidden /> Public verification
+              </span>
+              <Link
+                href="/verify"
+                className="text-xs font-medium text-neutral-500 hover:text-neutral-900"
+              >
+                Look up a certificate →
+              </Link>
             </div>
           </StaggerItem>
         </div>

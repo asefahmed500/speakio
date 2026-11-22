@@ -53,10 +53,13 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
     void params.then((p) => setStudentId(p.id))
   }, [params])
 
+  const fetchSeqRef = React.useRef(0)
   const fetchStudent = useCallback(async (id: string) => {
+    const seq = ++fetchSeqRef.current
     setLoading(true)
     setError(null)
     const { data, error: fetchError } = await apiFetch<StudentDetail>(`/admin/students/${id}`)
+    if (seq !== fetchSeqRef.current) return
     if (fetchError || !data) {
       setError(fetchError?.message ?? "Failed to load this student.")
       setStudent(null)

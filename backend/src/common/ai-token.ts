@@ -1,7 +1,10 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Resolves the live Cloudflare credential used for Workers AI.
@@ -32,26 +35,44 @@ export function getAiToken(): string {
   return process.env.ZAI_API_KEY?.trim() ?? '';
 }
 
-/** Ask wrangler to refresh its OAuth token, then return the fresh value. */
-export function refreshAiToken(): string {
-  try {
-    // .cmd shims need a shell on Windows; execFileSync cannot spawn them
-    // directly (EINVAL), which previously left the stale token in place.
-    if (process.platform === 'win32') {
-      execFileSync('cmd.exe', ['/c', 'npx wrangler whoami'], {
-        cwd: process.cwd(),
-        stdio: 'ignore',
-        timeout: 45_000,
-      });
-    } else {
-      execFileSync('npx', ['wrangler', 'whoami'], {
-        cwd: process.cwd(),
-        stdio: 'ignore',
-        timeout: 45_000,
-      });
-    }
-  } catch {
-    // Refresh is best-effort; the caller will surface the original error.
+/** Serialize concurrent refreshes so only one wrangler process runs at a time. */
+let inFlight: Promise<string> | null = null;
+let lastRefreshAt = 0;
+const MIN_REFRESH_INTERVAL_MS = 10_000;
+
+/**
+ * Ask wrangler to refresh its OAuth token, then return the fresh value.
+ *
+ * MUST stay async: an earlier `execFileSync` blocked the whole Node event loop
+ * for up to 45 s on every provider 401, stalling auth, health and all other
+ * requests. Concurrent callers now share one in-flight refresh.
+ */
+export function refreshAiToken(): Promise<string> {
+  if (inFlight) return inFlight;
+  if (Date.now() - lastRefreshAt < MIN_REFRESH_INTERVAL_MS) {
+    return Promise.resolve(getAiToken());
   }
-  return getAiToken();
+  inFlight = (async () => {
+    try {
+      if (process.platform === 'win32') {
+        await execFileAsync('cmd.exe', ['/c', 'npx wrangler whoami'], {
+          cwd: process.cwd(),
+          timeout: 45_000,
+          windowsHide: true,
+        });
+      } else {
+        await execFileAsync('npx', ['wrangler', 'whoami'], {
+          cwd: process.cwd(),
+          timeout: 45_000,
+        });
+      }
+    } catch {
+      // Refresh is best-effort; the caller will surface the original error.
+    }
+    lastRefreshAt = Date.now();
+    return getAiToken();
+  })().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
 }

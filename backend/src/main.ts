@@ -1,5 +1,5 @@
-import { createServer } from './server';
 import 'dotenv/config';
+import { createServer } from './server';
 
 async function bootstrap() {
   const app = await createServer();

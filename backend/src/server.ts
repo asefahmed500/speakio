@@ -75,7 +75,10 @@ export async function createServer(): Promise<AppInstance> {
         callback(null, true);
         return;
       }
+      // Only trust private-network origins in development. In production a
+      // page on the LAN could otherwise make credentialed cross-origin calls.
       const isLocal =
+        process.env.NODE_ENV !== 'production' &&
         /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(
           origin,
         );

@@ -1,9 +1,9 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { AlertCircle, ArrowRight } from "lucide-react"
-import { ButtonLink } from "@/components/ui/button"
+import { Button, ButtonLink } from "@/components/ui/button"
 import { apiFetch } from "@/lib/api-client"
 
 interface PlatformStats {
@@ -20,22 +20,28 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const fetchStats = useCallback(async () => {
+    setLoading(true)
+    const { data, error: fetchError } = await apiFetch<PlatformStats>("/users/stats")
+    if (fetchError || !data) {
+      setError(fetchError?.message ?? "Failed to load platform stats.")
+      setStats(null)
+    } else {
+      setStats(data)
+      setError(null)
+    }
+    setLoading(false)
+  }, [])
+
   useEffect(() => {
     let active = true
-    void Promise.resolve().then(async () => {
-      const { data, error: fetchError } = await apiFetch<PlatformStats>("/users/stats")
-      if (!active) return
-      if (fetchError || !data) {
-        setError(fetchError?.message ?? "Failed to load platform stats.")
-      } else {
-        setStats(data)
-      }
-      setLoading(false)
+    void Promise.resolve().then(() => {
+      if (active) return fetchStats()
     })
     return () => {
       active = false
     }
-  }, [])
+  }, [fetchStats])
 
   const runsByStatus = (status: string) =>
     stats?.agentRuns.find((r) => r.status === status)?.count ?? 0
@@ -62,7 +68,9 @@ export default function OverviewPage() {
           <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-5 text-center space-y-3">
             <AlertCircle className="h-6 w-6 text-destructive mx-auto" aria-hidden />
             <p className="text-sm text-destructive">{error}</p>
-            <ButtonLink variant="outline" size="sm" href="/overview">Retry</ButtonLink>
+            <Button variant="outline" size="sm" onClick={() => void fetchStats()}>
+              Retry
+            </Button>
           </div>
         )}
 

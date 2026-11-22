@@ -43,12 +43,13 @@ interface FullSet extends ManagedSet {
 }
 
 const SKILLS = ["LISTENING", "READING", "WRITING", "SPEAKING"] as const
+// Monochrome skill badges — the label identifies the skill, not a hue.
 const SKILL_BADGE: Record<string, string> = {
-  LISTENING: "border-primary/30 bg-primary/10 text-primary",
-  READING: "border-emerald-700/30 bg-emerald-700/10 text-emerald-800",
-  WRITING: "border-warning/30 bg-warning/10 text-warning",
-  SPEAKING: "border-purple-600/30 bg-purple-600/10 text-purple-700",
-  FULL_MOCK: "border-border bg-surface-subtle text-muted-foreground",
+  LISTENING: "border-black/15 bg-white text-black/70",
+  READING: "border-black/15 bg-[#fafafa] text-black/70",
+  WRITING: "border-black/20 bg-white text-black",
+  SPEAKING: "border-black/30 bg-[#fafafa] text-black",
+  FULL_MOCK: "border-black/10 bg-[#fafafa] text-black/45",
 }
 
 export default function QuestionBankPage() {
@@ -107,15 +108,23 @@ export default function QuestionBankPage() {
     }
   }, [fetchSets])
 
+  const loadSeqRef = React.useRef(0)
+
   const loadSet = useCallback(async (id: string) => {
+    const seq = ++loadSeqRef.current
     setExpandedId(id)
     setFullLoading(true)
     setFullSet(null)
     setShowAddForm(false)
+    setError(null)
     const { data, error: fetchError } = await apiFetch<FullSet>(`/tests/${id}/full`)
+    // A newer click must never be overwritten by an older, slower response.
+    if (seq !== loadSeqRef.current) return
     setFullLoading(false)
     if (fetchError || !data) {
       setError(fetchError?.message ?? "Failed to load the set.")
+      // Collapse on failure so clicking the row again retries instead of closing.
+      setExpandedId(null)
       return
     }
     setFullSet(data)
@@ -368,7 +377,12 @@ export default function QuestionBankPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => void topUpSet(set)}
-                        disabled={topUpBusy === set.id}
+                        disabled={topUpBusy === set.id || set.attemptsCount > 0}
+                        title={
+                          set.attemptsCount > 0
+                            ? "This set has student attempt history — adding questions would change what future attempts receive."
+                            : undefined
+                        }
                         className="cursor-pointer gap-1.5"
                       >
                         {topUpBusy === set.id ? (
@@ -532,7 +546,9 @@ export default function QuestionBankPage() {
         cancelLabel="Keep it"
         isSubmitting={deletingSet}
         error={deleteError}
-        onConfirm={() => void deleteSet()}
+        onConfirm={async () => {
+          await deleteSet()
+        }}
         onCancel={() => {
           setDeleteError(null)
           setDeleteSetTarget(null)
@@ -548,7 +564,9 @@ export default function QuestionBankPage() {
         cancelLabel="Keep it"
         isSubmitting={deletingQuestion}
         error={deleteError}
-        onConfirm={() => void deleteQuestion()}
+        onConfirm={async () => {
+          await deleteQuestion()
+        }}
         onCancel={() => {
           setDeleteError(null)
           setDeleteQuestionTarget(null)

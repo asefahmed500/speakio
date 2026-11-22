@@ -40,6 +40,7 @@ export class ZaiProvider {
     failures: 0,
     openUntil: 0,
     halfOpen: false,
+    probeInFlight: false,
   };
   private static readonly FAILURE_THRESHOLD = 5;
   private static readonly COOLDOWN_MS = 60_000;
@@ -51,11 +52,16 @@ export class ZaiProvider {
         `AI provider circuit open for another ${Math.ceil((this.breaker.openUntil - now) / 1000)}s`,
       );
     }
-    if (this.breaker.halfOpen) return;
-    if (this.breaker.failures >= ZaiProvider.FAILURE_THRESHOLD) {
-      this.breaker.openUntil = now + ZaiProvider.COOLDOWN_MS;
+    // Cooldown elapsed: switch to half-open so exactly one probe can pass.
+    if (!this.breaker.halfOpen && this.breaker.failures >= ZaiProvider.FAILURE_THRESHOLD) {
       this.breaker.halfOpen = true;
-      throw new Error('AI provider circuit opened after repeated failures');
+    }
+    if (this.breaker.halfOpen) {
+      if (this.breaker.probeInFlight) {
+        throw new Error('AI provider circuit is half-open; a recovery probe is already in flight');
+      }
+      this.breaker.probeInFlight = true;
+      return;
     }
   }
 
@@ -63,10 +69,26 @@ export class ZaiProvider {
     this.breaker.failures = 0;
     this.breaker.openUntil = 0;
     this.breaker.halfOpen = false;
+    this.breaker.probeInFlight = false;
   }
 
   private recordFailure(): void {
-    if (!this.breaker.halfOpen) this.breaker.failures += 1;
+    if (this.breaker.halfOpen) {
+      // The single recovery probe failed — reopen the circuit for a full
+      // cooldown instead of letting every request retry the whole ladder.
+      this.breaker.halfOpen = false;
+      this.breaker.probeInFlight = false;
+      this.breaker.openUntil = Date.now() + ZaiProvider.COOLDOWN_MS;
+      this.breaker.failures = ZaiProvider.FAILURE_THRESHOLD;
+      return;
+    }
+    this.breaker.failures += 1;
+    if (this.breaker.failures >= ZaiProvider.FAILURE_THRESHOLD) {
+      this.breaker.openUntil = Date.now() + ZaiProvider.COOLDOWN_MS;
+      // Never throw here: it would mask the real provider error and skip the
+      // caller's logging/classification. assertAvailable() surfaces the open
+      // circuit on the next call.
+    }
   }
 
   /**
@@ -128,9 +150,11 @@ export class ZaiProvider {
       // Refresh through wrangler and retry exactly once.
       const status = (error as { status?: number } | null)?.status;
       if (status === 401 && !retried) {
-        refreshAiToken();
+        await refreshAiToken();
         this.client = null;
         this.clientKey = '';
+        // Release the half-open probe slot so the single retry can pass.
+        if (this.breaker.halfOpen) this.breaker.probeInFlight = false;
         return this.generate(options, true);
       }
       this.recordFailure();
@@ -235,7 +259,9 @@ export class ZaiProvider {
           yield delta;
         }
       }
+      this.recordSuccess();
     } catch (error) {
+      this.recordFailure();
       const message = error instanceof Error ? error.message : String(error);
       const stack = error instanceof Error ? error.stack : undefined;
       this.logger.error(`Z.AI stream failed: ${message}`, stack);

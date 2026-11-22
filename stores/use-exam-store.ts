@@ -17,11 +17,13 @@ interface ExamDraftState {
   essayText: string
   wordCount: number
   answers: Record<string, ExamAnswer>
+  flaggedIds: string[]
   savedAt: number | null
 
   setAttemptId: (attemptId: string | null) => void
   setEssayText: (text: string) => void
   setAnswer: (questionId: string, answer: string) => void
+  toggleFlag: (questionId: string) => void
   markSaved: () => void
   clearExamDraft: () => void
 }
@@ -33,6 +35,7 @@ export const useExamStore = create<ExamDraftState>()(
       essayText: "",
       wordCount: 0,
       answers: {},
+      flaggedIds: [],
       savedAt: null,
 
       setAttemptId: (attemptId) => set({ attemptId }),
@@ -51,9 +54,15 @@ export const useExamStore = create<ExamDraftState>()(
             },
           },
         })),
+      toggleFlag: (questionId) =>
+        set((state) => ({
+          flaggedIds: state.flaggedIds.includes(questionId)
+            ? state.flaggedIds.filter((id) => id !== questionId)
+            : [...state.flaggedIds, questionId],
+        })),
       markSaved: () => set({ savedAt: Date.now() }),
       clearExamDraft: () =>
-        set({ attemptId: null, essayText: "", wordCount: 0, answers: {}, savedAt: null }),
+        set({ attemptId: null, essayText: "", wordCount: 0, answers: {}, flaggedIds: [], savedAt: null }),
     }),
     {
       name: "speakio-exam-draft-v2",

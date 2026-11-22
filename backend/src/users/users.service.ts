@@ -21,15 +21,56 @@ const LIST_SELECT = {
   targetBand: true,
   subscriptionTier: true,
   createdAt: true,
-  attempts: {
-    orderBy: { startedAt: 'desc' as const },
-    select: {
-      status: true,
-      startedAt: true,
-      scores: { select: { bandScore: true, createdAt: true }, take: 1 },
-    },
-  },
 } satisfies Prisma.UserSelect;
+
+interface ActivityStat {
+  attemptsCount: number;
+  completedCount: number;
+  avgBand: number | null;
+  lastActivityAt: Date | null;
+}
+
+/**
+ * True totals in one aggregate query. The previous roster loaded EVERY attempt
+ * (with nested scores) for EVERY user just to count them — memory scaled with
+ * all historical activity. COUNT(DISTINCT) avoids score-join multiplication.
+ */
+async function activityStats(
+  prisma: PrismaService,
+  userIds: string[],
+): Promise<Map<string, ActivityStat>> {
+  const result = new Map<string, ActivityStat>();
+  if (userIds.length === 0) return result;
+  const rows = await prisma.$queryRaw<
+    Array<{
+      userId: string;
+      attemptsCount: number;
+      completedCount: number;
+      avgBand: number | null;
+      lastActivityAt: Date | null;
+    }>
+  >(Prisma.sql`
+    SELECT u.id AS "userId",
+      COUNT(DISTINCT a.id)::int AS "attemptsCount",
+      COUNT(DISTINCT a.id) FILTER (WHERE a.status = 'COMPLETED')::int AS "completedCount",
+      MAX(a."startedAt") AS "lastActivityAt",
+      ROUND(AVG(s."bandScore")::numeric, 1) AS "avgBand"
+    FROM users u
+    LEFT JOIN attempts a ON a."userId" = u.id
+    LEFT JOIN scores s ON s."attemptId" = a.id
+    WHERE u.id = ANY(${userIds}::text[])
+    GROUP BY u.id
+  `);
+  for (const r of rows) {
+    result.set(r.userId, {
+      attemptsCount: Number(r.attemptsCount),
+      completedCount: Number(r.completedCount),
+      avgBand: r.avgBand == null ? null : Number(r.avgBand),
+      lastActivityAt: r.lastActivityAt,
+    });
+  }
+  return result;
+}
 
 @Injectable()
 export class UsersService {
@@ -160,18 +201,9 @@ export class UsersService {
       take,
     });
 
+    const stats = await activityStats(this.prisma, users.map((u) => u.id));
     return users.map((u) => {
-      const completed = u.attempts.filter(
-        (a) => a.status === 'COMPLETED',
-      ).length;
-      const bands = u.attempts
-        .map((a) => a.scores[0]?.bandScore)
-        .filter((b): b is number => typeof b === 'number');
-      const avgBand =
-        bands.length > 0
-          ? Math.round((bands.reduce((s, b) => s + b, 0) / bands.length) * 10) /
-            10
-          : null;
+      const s = stats.get(u.id);
       return {
         id: u.id,
         email: u.email,
@@ -181,10 +213,10 @@ export class UsersService {
         targetBand: u.targetBand,
         subscriptionTier: u.subscriptionTier,
         createdAt: u.createdAt,
-        attemptsCount: u.attempts.length,
-        completedCount: completed,
-        avgBand,
-        lastActivityAt: u.attempts[0]?.startedAt ?? null,
+        attemptsCount: s?.attemptsCount ?? 0,
+        completedCount: s?.completedCount ?? 0,
+        avgBand: s?.avgBand ?? null,
+        lastActivityAt: s?.lastActivityAt ?? null,
       };
     });
   }
@@ -260,7 +292,13 @@ export class UsersService {
       throw new ConflictException(`User already has role ${newRole}`);
     }
 
-    if (target.role === Role.ADMIN && newRole !== Role.ADMIN) {
+    if (
+      target.role === Role.ADMIN &&
+      newRole !== Role.ADMIN &&
+      target.status === 'ACTIVE'
+    ) {
+      // A suspended admin is not counted in activeAdmins, so demoting one can
+      // never remove the last ACTIVE admin — skip the guard in that case.
       // Serialize concurrent admin demotions: lock all active admin rows
       // first, then re-check the count inside the same transaction — two
       // simultaneous demotions can never both pass the guard.
@@ -384,33 +422,24 @@ export class UsersService {
     });
     if (!student) throw new NotFoundException('Student not found');
 
-    const bands = student.attempts
-      .map((a) => a.scores[0]?.bandScore)
-      .filter((b): b is number => typeof b === 'number');
-    const perSkill: Record<string, number[]> = {};
-    for (const a of student.attempts) {
-      const band = a.scores[0]?.bandScore;
-      if (typeof band === 'number') {
-        const skill = a.testSet.skill;
-        (perSkill[skill] ??= []).push(band);
-      }
+    // Counters must describe the whole history, not the 50 rows rendered below.
+    const stats = (await activityStats(this.prisma, [studentId])).get(studentId);
+    const allScores = await this.prisma.score.findMany({
+      where: { attempt: { userId: studentId } },
+      orderBy: { createdAt: 'desc' },
+      select: { skill: true, bandScore: true },
+    });
+    const latestPerSkill: Record<string, number> = {};
+    for (const s of allScores) {
+      if (!(s.skill in latestPerSkill)) latestPerSkill[s.skill] = s.bandScore;
     }
-    const latestPerSkill = Object.fromEntries(
-      Object.entries(perSkill).map(([skill, list]) => [skill, list[0]]),
-    );
 
     return {
       ...student,
       stats: {
-        attemptsCount: student.attempts.length,
-        completedCount: student.attempts.filter((a) => a.status === 'COMPLETED')
-          .length,
-        avgBand:
-          bands.length > 0
-            ? Math.round(
-                (bands.reduce((s, b) => s + b, 0) / bands.length) * 10,
-              ) / 10
-            : null,
+        attemptsCount: stats?.attemptsCount ?? 0,
+        completedCount: stats?.completedCount ?? 0,
+        avgBand: stats?.avgBand ?? null,
         latestPerSkill,
       },
     };
@@ -434,13 +463,9 @@ export class UsersService {
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
+    const stats = await activityStats(this.prisma, students.map((u) => u.id));
     return students.map((u) => {
-      const completed = u.attempts.filter(
-        (a) => a.status === 'COMPLETED',
-      ).length;
-      const bands = u.attempts
-        .map((a) => a.scores[0]?.bandScore)
-        .filter((b): b is number => typeof b === 'number');
+      const s = stats.get(u.id);
       return {
         id: u.id,
         email: u.email,
@@ -448,15 +473,10 @@ export class UsersService {
         status: u.status,
         targetBand: u.targetBand,
         createdAt: u.createdAt,
-        attemptsCount: u.attempts.length,
-        completedCount: completed,
-        avgBand:
-          bands.length > 0
-            ? Math.round(
-                (bands.reduce((s, b) => s + b, 0) / bands.length) * 10,
-              ) / 10
-            : null,
-        lastActivityAt: u.attempts[0]?.startedAt ?? null,
+        attemptsCount: s?.attemptsCount ?? 0,
+        completedCount: s?.completedCount ?? 0,
+        avgBand: s?.avgBand ?? null,
+        lastActivityAt: s?.lastActivityAt ?? null,
       };
     });
   }

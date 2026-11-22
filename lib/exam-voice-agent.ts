@@ -20,6 +20,7 @@ export class ExamVoiceAgent {
   private analyser: AnalyserNode | null = null
   private mediaStream: MediaStream | null = null
   private isSpeaking = false
+  private muted = false
 
   constructor() {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -90,6 +91,7 @@ export class ExamVoiceAgent {
 
       utterance.rate = 0.95 // Measured, calm IELTS examiner pace
       utterance.pitch = 1.0
+      utterance.volume = this.muted ? 0 : 1
 
       utterance.onstart = () => {
         this.isSpeaking = true
@@ -125,6 +127,14 @@ export class ExamVoiceAgent {
 
   public get speaking(): boolean {
     return this.isSpeaking
+  }
+
+  /** Mute/unmute examiner speech synthesis (used by the listening player). */
+  public setMuted(muted: boolean): void {
+    this.muted = muted
+    if (this.currentUtterance) {
+      this.currentUtterance.volume = muted ? 0 : 1
+    }
   }
 
   /**

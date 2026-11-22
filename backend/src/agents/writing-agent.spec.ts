@@ -99,9 +99,12 @@ describe('WritingScoringAgent & Z.AI Infrastructure', () => {
   describe('Model Router Strategy', () => {
     // Expectations follow the env contract (ZAI_MODEL_*), not hardcoded model
     // names — the provider catalog changes, the routing behavior must not.
-    const reasoning = process.env.ZAI_MODEL_REASONING || 'glm-5';
-    const general = process.env.ZAI_MODEL_GENERAL || 'glm-4.5-air';
-    const fast = process.env.ZAI_MODEL_FAST || 'glm-5.3-flash';
+    // Must mirror ModelRouterService defaults exactly — a wrong fallback here
+    // hides a wrong production default from CI.
+    const DEFAULT_MODEL = '@cf/zai-org/glm-4.7-flash';
+    const reasoning = process.env.ZAI_MODEL_REASONING || DEFAULT_MODEL;
+    const general = process.env.ZAI_MODEL_GENERAL || DEFAULT_MODEL;
+    const fast = process.env.ZAI_MODEL_FAST || DEFAULT_MODEL;
 
     it('should route REASONING_EVAL to the reasoning tier', () => {
       expect(modelRouter.getModelForTask('REASONING_EVAL')).toBe(reasoning);

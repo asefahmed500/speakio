@@ -47,7 +47,7 @@ function ResetForm() {
       setServerError(error.message)
       return
     }
-    router.push("/login")
+    router.push("/login?passwordChanged=1")
   }
 
   if (!token) {

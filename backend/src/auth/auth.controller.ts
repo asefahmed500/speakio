@@ -36,7 +36,11 @@ const loginSchema = z.object({
 // *.workers.dev frontend against a tunneled API), browsers only accept
 // cross-site auth cookies with SameSite=None + Secure. Set
 // COOKIE_SAMESITE=none in that topology; same-origin deployments keep lax.
-const COOKIE_SAMESITE = process.env.COOKIE_SAMESITE === 'none' ? 'none' : 'lax';
+// Read lazily: controllers are evaluated while module imports run, which is
+// before main.ts loads dotenv. A module-scope read silently ignored .env.
+function cookieSameSite(): 'lax' | 'none' {
+  return process.env.COOKIE_SAMESITE === 'none' ? 'none' : 'lax';
+}
 const resetRequestSchema = z.object({
   email: z.string().trim().email('A valid email address is required').max(254),
 });
@@ -49,12 +53,17 @@ const resetPasswordSchema = z.object({
     .max(128),
 });
 
-const BASE_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production' || COOKIE_SAMESITE === 'none',
-  sameSite: COOKIE_SAMESITE as 'lax' | 'none',
-  path: '/',
-};
+function baseCookieOptions() {
+  const sameSite = cookieSameSite();
+  return {
+    httpOnly: true,
+    // SameSite=None cookies must be Secure. For local HTTP dev use lax so the
+    // browser actually stores the session cookie.
+    secure: process.env.NODE_ENV === 'production' || sameSite === 'none',
+    sameSite,
+    path: '/',
+  };
+}
 
 /** "15m" | "12h" | "7d" | "60" -> milliseconds; falls back to 15 minutes. */
 function parseJwtTtlMs(raw: string | undefined): number {
@@ -154,7 +163,14 @@ export class AuthController {
       req.cookies?.refresh_token as string | undefined,
       noRotate !== '1',
     );
-    this.setAuthCookies(res, result.accessToken, result.refreshToken);
+    this.setAuthCookies(
+      res,
+      result.accessToken,
+      result.refreshToken,
+      result.refreshTokenExpiresAt
+        ? Math.max(0, new Date(result.refreshTokenExpiresAt).getTime() - Date.now())
+        : undefined
+    );
     return result.user;
   }
 
@@ -168,8 +184,9 @@ export class AuthController {
     await this.authService.logout(
       req.cookies?.refresh_token as string | undefined,
     );
-    res.clearCookie('access_token', { ...BASE_COOKIE_OPTIONS });
-    res.clearCookie('refresh_token', { ...BASE_COOKIE_OPTIONS });
+    const options = baseCookieOptions();
+    res.clearCookie('access_token', options);
+    res.clearCookie('refresh_token', options);
     return { success: true, message: 'Logged out successfully' };
   }
 
@@ -183,14 +200,17 @@ export class AuthController {
     res: Response,
     accessToken: string,
     refreshToken: string,
+    refreshMaxAge?: number,
   ) {
     res.cookie('access_token', accessToken, {
-      ...BASE_COOKIE_OPTIONS,
+      ...baseCookieOptions(),
       maxAge: accessTtlMs(),
     });
     res.cookie('refresh_token', refreshToken, {
-      ...BASE_COOKIE_OPTIONS,
-      maxAge: refreshTtlMs(),
+      ...baseCookieOptions(),
+      // No-rotate RSC refreshes reuse the existing token — its real expiry is
+      // unchanged, so the browser cookie must not be extended to 7 days.
+      maxAge: refreshMaxAge ?? refreshTtlMs(),
     });
   }
 }

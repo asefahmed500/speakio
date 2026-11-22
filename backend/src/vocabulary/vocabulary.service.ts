@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { z } from 'zod';
 
 export const vocabularyItemSchema = z.object({
-  word: z.string().trim().min(1, 'Word is required').max(80),
+  word: z.string().trim().min(2, 'Word or phrase must be at least 2 characters').max(80),
   phonetic: z.string().trim().max(120).optional().nullable(),
   partOfSpeech: z.enum([
     'verb',
@@ -17,7 +17,7 @@ export const vocabularyItemSchema = z.object({
     'collocation',
     'idiom',
   ]),
-  definition: z.string().trim().min(1, 'Definition is required').max(1000),
+  definition: z.string().trim().min(10, 'Definition must be at least 10 characters').max(1000),
   bandTarget: z.number().refine((v) => v >= 6 && v <= 9 && (v * 2) % 1 === 0, {
     message: 'Band target must be between 6.0 and 9.0 in 0.5 steps',
   }),
@@ -27,7 +27,7 @@ export const vocabularyItemSchema = z.object({
   exampleSentence: z
     .string()
     .trim()
-    .min(1, 'Example sentence is required')
+    .min(15, 'Example sentence must be at least 15 characters')
     .max(1000),
 });
 

@@ -117,7 +117,11 @@ export function SkillTestsPage({ skill }: { skill: SkillKey }) {
       setTests(testsResult.data.filter((t) => t.questionCount > 0))
       setError(null)
     }
-    if (!summaryResult.error && summaryResult.data) {
+    if (summaryResult.error || !summaryResult.data) {
+      // Never keep a previous skill's (or a stale successful) KPI card visible
+      // after a failed refresh.
+      setSummary(null)
+    } else {
       setSummary(summaryResult.data)
     }
     setLoading(false)

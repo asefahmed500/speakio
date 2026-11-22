@@ -19,6 +19,8 @@ const eslintConfig = defineConfig([
     ".open-next/**",
     // Separate NestJS backend project with its own toolchain:
     "backend/**",
+    // Standalone Node verification scripts run outside the Next.js/TS stack.
+    "ops/**",
   ]),
 ]);
 

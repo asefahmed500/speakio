@@ -122,10 +122,10 @@ export class JwtAuthGuard implements CanActivate {
         }
       }
     } catch (error) {
-      if (error instanceof UnauthorizedException) throw error;
-      // DB outage must not lock out every authenticated user; token validity
-      // still gates the request and the check retries after the cache window.
-      return;
+      // Fail CLOSED. Authorization state lives in the database — if it cannot
+      // be read, admitting the request would silently bypass suspension and
+      // role changes. A DB outage must produce an error, not a security hole.
+      throw error;
     }
     // Rejection happens OUTSIDE the try — a swallowed ForbiddenException here
     // would silently invalidate the whole guard.

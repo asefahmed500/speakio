@@ -24,10 +24,20 @@ export function ListeningAudioPlayer({
   const usingSyntheticAudio = !audioUrl
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const ttsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopTtsProgress = () => {
+    if (ttsTimerRef.current) {
+      clearInterval(ttsTimerRef.current)
+      ttsTimerRef.current = null
+    }
+  }
 
   useEffect(() => {
     return () => {
+      stopTtsProgress()
       examVoiceAgent.cancel()
+      examVoiceAgent.setMuted(false)
     }
   }, [])
 
@@ -37,6 +47,7 @@ export function ListeningAudioPlayer({
     if (audioUrl && audioRef.current) {
       if (isPlaying) {
         audioRef.current.pause()
+        stopTtsProgress()
         setIsPlaying(false)
       } else {
         setIsBuffering(true)
@@ -51,20 +62,31 @@ export function ListeningAudioPlayer({
         }
       }
     } else if (dialoguePassage) {
-      // If no mp3 file is configured, synthesize the authentic listening dialogue with our voice agent!
       if (isPlaying) {
         examVoiceAgent.cancel()
+        stopTtsProgress()
         setIsPlaying(false)
       } else {
         setIsPlaying(true)
+        setProgress(0)
+        const words = dialoguePassage.trim().split(/\s+/).filter(Boolean).length
+        const estimatedMs = Math.max(4_000, (words / 2.5) * 1000)
+        stopTtsProgress()
+        ttsTimerRef.current = setInterval(() => {
+          setProgress((prev) => Math.min(99, prev + (250 / estimatedMs) * 100))
+        }, 250)
         void examVoiceAgent.speak(
           dialoguePassage,
           () => setIsPlaying(true),
           () => {
+            stopTtsProgress()
             setIsPlaying(false)
             setProgress(100)
           },
-          () => setIsPlaying(false)
+          () => {
+            stopTtsProgress()
+            setIsPlaying(false)
+          }
         )
       }
     }
@@ -74,14 +96,12 @@ export function ListeningAudioPlayer({
     if (audioRef.current) {
       const dur = audioRef.current.duration
       const cur = audioRef.current.currentTime
-      if (dur > 0) {
-        setProgress((cur / dur) * 100)
-      }
+      if (dur > 0) setProgress((cur / dur) * 100)
     }
   }
 
   return (
-    <div className="rounded-2xl border border-white/15 bg-gradient-to-r from-[#16213A]/90 to-[#0F172A] p-4 sm:p-5 backdrop-blur-xl shadow-xl space-y-3">
+    <div className="rounded-[var(--radius-lg)] border border-black/10 bg-white p-4 sm:p-5 space-y-3">
       {audioUrl && (
         <audio
           ref={audioRef}
@@ -94,17 +114,17 @@ export function ListeningAudioPlayer({
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-400/10 text-cyan-100">
+          <div className="flex size-10 items-center justify-center rounded-[var(--radius-lg)] border border-black/10 bg-[#fafafa] text-black">
             <Headphones className="size-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-white">{sectionTitle}</h3>
-              <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[9px] font-mono text-cyan-100">
+              <h3 className="text-sm font-semibold text-black">{sectionTitle}</h3>
+              <span className="rounded-full border border-black/10 bg-[#fafafa] px-2 py-0.5 text-[9px] font-mono text-black/50">
                 OFFICIAL AUDIO STIMULUS
               </span>
             </div>
-            <p className="text-xs text-white/50">
+            <p className="text-xs text-black/40">
               {usingSyntheticAudio
                 ? "Simulated IELTS Listening Dialogue (AI Voice Engine)"
                 : "Continuous Recording · Listen and answer questions"}
@@ -112,13 +132,12 @@ export function ListeningAudioPlayer({
           </div>
         </div>
 
-        {/* Controls */}
         <div className="flex items-center gap-3">
           <Button
             size="sm"
             onClick={() => void handleTogglePlay()}
             disabled={isBuffering}
-            className="cursor-pointer rounded-xl bg-white px-4 py-2 text-xs font-medium text-black hover:bg-neutral-200 disabled:opacity-60 shadow-md"
+            className="cursor-pointer rounded-[var(--radius-lg)] px-4 text-xs"
           >
             {isBuffering ? (
               <>
@@ -138,35 +157,35 @@ export function ListeningAudioPlayer({
           <Button
             variant="ghost"
             size="icon-sm"
+            aria-label={isMuted ? "Unmute audio" : "Mute audio"}
             onClick={() => {
-              if (audioRef.current) {
-                audioRef.current.muted = !isMuted
-                setIsMuted(!isMuted)
-              }
+              const next = !isMuted
+              if (audioRef.current) audioRef.current.muted = next
+              examVoiceAgent.setMuted(next)
+              setIsMuted(next)
             }}
-            className="text-white/70 hover:text-white hover:bg-white/10"
+            className="text-black/55 hover:text-black hover:bg-[#f4f4f4]"
           >
             {isMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
           </Button>
         </div>
       </div>
 
-      {/* Progress Bar / Playing Equalizer */}
       <div className="space-y-1.5 pt-1">
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/10">
           <div
-            className="h-full bg-gradient-to-r from-cyan-400 to-indigo-400 transition-all duration-150"
+            className="h-full bg-black transition-all duration-150"
             style={{ width: `${progress}%` }}
           />
         </div>
         {isPlaying && (
-          <div className="flex items-center justify-between text-[10px] font-mono text-cyan-100">
+          <div className="flex items-center justify-between text-[10px] font-mono text-black/50">
             <span>● AUDIO PLAYING — ANSWER QUESTIONS CONCURRENTLY</span>
             <span>OFFICIAL IELTS FORMAT</span>
           </div>
         )}
         {audioError && (
-          <p role="alert" className="pt-1 text-[11px] text-rose-200">{audioError}</p>
+          <p role="alert" className="pt-1 text-[11px] text-black/70">{audioError}</p>
         )}
       </div>
     </div>

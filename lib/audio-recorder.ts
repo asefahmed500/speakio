@@ -104,6 +104,11 @@ export class WavSegmentRecorder {
     return this.segments.filter(Boolean).length
   }
 
+  /** Live microphone stream, exposed for the exam waveform visualizer. */
+  get microphoneStream(): MediaStream | null {
+    return this.stream
+  }
+
   async start(): Promise<void> {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },

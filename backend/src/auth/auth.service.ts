@@ -226,9 +226,15 @@ export class AuthService {
     }
 
     if (stored.revokedAt) {
-      await this.revokeFamily(stored.familyId);
+      // A stale no-rotate RSC refresh can present a token that a concurrent
+      // browser-driven rotation already revoked. Treating that as theft and
+      // revoking the family would log out every device. Only authenticated
+      // rotation requests perform theft detection.
+      if (rotate) await this.revokeFamily(stored.familyId);
       throw new UnauthorizedException(
-        'Refresh token reuse detected — session revoked',
+        rotate
+          ? 'Refresh token reuse detected — session revoked'
+          : 'Refresh token expired',
       );
     }
     if (stored.expiresAt < new Date()) {
@@ -243,20 +249,36 @@ export class AuthService {
     if (rotate) {
       nextRaw = crypto.randomBytes(48).toString('base64url');
       expiresAt = this.refreshExpiry();
-      await this.prisma.$transaction([
-        this.prisma.refreshToken.update({
-          where: { id: stored.id },
+      let reuseDetected = false;
+      await this.prisma.$transaction(async (tx) => {
+        // Conditional claim: only the first concurrent refresh can revoke this
+        // token. A second racing request updates 0 rows and is rejected below.
+        const claimed = await tx.refreshToken.updateMany({
+          where: { id: stored.id, revokedAt: null },
           data: { revokedAt: new Date() },
-        }),
-        this.prisma.refreshToken.create({
+        });
+        if (claimed.count !== 1) {
+          reuseDetected = true;
+          return;
+        }
+        await tx.refreshToken.create({
           data: {
             tokenHash: this.hashToken(nextRaw),
             userId: stored.userId,
             familyId: stored.familyId,
             expiresAt,
           },
-        }),
-      ]);
+        });
+      });
+      // Thief response must happen OUTSIDE the transaction. Calling
+      // this.prisma (a separate connection) from inside it deadlocks when
+      // several rotations race on the same row, surfacing as a 500.
+      if (reuseDetected) {
+        await this.revokeFamily(stored.familyId);
+        throw new UnauthorizedException(
+          'Refresh token reuse detected — session revoked',
+        );
+      }
     }
 
     const user = await this.prisma.user.findUnique({
@@ -275,7 +297,9 @@ export class AuthService {
     }
 
     return {
-      accessToken: this.generateAccessToken({ ...stored.user }),
+      // Use the freshly loaded user so a name/role change during refresh is
+      // reflected in the new access token instead of the stale cached row.
+      accessToken: this.generateAccessToken(user),
       refreshToken: nextRaw,
       refreshTokenExpiresAt: expiresAt,
       user,

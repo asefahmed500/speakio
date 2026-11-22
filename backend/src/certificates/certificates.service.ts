@@ -8,7 +8,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
-import { randomInt } from 'crypto';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AttemptsService } from '../attempts/attempts.service';
 import { overallBandOf } from '../common/band.utils';
@@ -96,10 +96,11 @@ export class CertificatesService {
       const year = new Date().getFullYear();
       // Number and code are independent secrets: knowing the public
       // certificate number must not reveal the verification code.
-      const numberToken = String(randomInt(0, 1_000_000)).padStart(6, '0');
-      const codeToken = String(randomInt(0, 1_000_000)).padStart(6, '0');
-      const certificateNumber = `SPK-${year}-${numberToken}-B${String(overall).replace('.', '')}`;
-      const verificationCode = `SPK-VERIFY-${codeToken}`;
+      // High-entropy tokens make unique-constraint collisions practically
+      // impossible; issuance never needs a fragile retry inside the tx.
+      const token = () => randomBytes(8).toString('hex').toUpperCase();
+      const certificateNumber = `SPK-${year}-${token()}-B${String(overall).replace('.', '')}`;
+      const verificationCode = `SPK-VERIFY-${token()}`;
 
       return tx.certificate.create({
         data: {
@@ -146,9 +147,15 @@ export class CertificatesService {
 
   /** Public verification — safe fields only. */
   async verifyByCode(code: string) {
+    // Codes are generated uppercase; normalize direct URL lookups too, not just
+    // the client-side form transform.
+    const normalized = code.trim().toUpperCase();
     const cert = await this.prisma.certificate.findFirst({
       where: {
-        OR: [{ verificationCode: code }, { certificateNumber: code }],
+        OR: [
+          { verificationCode: normalized },
+          { certificateNumber: normalized },
+        ],
       },
       include: { user: { select: { name: true } } },
     });

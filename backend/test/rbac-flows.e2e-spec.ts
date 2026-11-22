@@ -3,30 +3,66 @@
  * Roles: USER and ADMIN only. All writing/speaking review is performed by AI
  * agents — no human queue exists; admins may override from the audit trail.
  *
- * Skips gracefully when the server is unreachable so CI without a database
- * does not fail. Every test exercises real HTTP + real database state.
+ * Fails loudly when the server is unreachable in CI; locally an unavailable
+ * backend marks tests as SKIPPED (never passed) so a false green is impossible.
+ * Every test exercises real HTTP + real database state.
  *
  * Run: npm run test:e2e   (from backend/)
  */
 import { describe, beforeAll, it, expect } from '@jest/globals';
+import { execFileSync } from 'node:child_process';
 
 const API = process.env.E2E_API_URL ?? 'http://localhost:4040';
 const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL ?? 'admin@speakio.com';
 const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? 'TestAdmin123!';
 
+/**
+ * Jest registers `it` / `it.skip` while describe() is evaluated — BEFORE any
+ * beforeAll hook runs. Deciding run-vs-skip from a flag set in beforeAll (as an
+ * earlier version did) skipped EVERY test even with a healthy backend. The
+ * probe therefore has to happen at module load, synchronously, before the
+ * `withIt(...)` calls below register tests.
+ */
 let serverUp = false;
-const withIt = (name: string, fn: () => unknown, timeout?: number) =>
-  it(
-    name,
-    async () => {
-      if (!serverUp) {
-        console.warn(`[e2e] skipped: "${name}" (backend unreachable)`);
-        return;
-      }
-      await fn();
-    },
-    timeout,
+try {
+  // Use node's http client, not fetch: on Windows Node 24 a fetch+process.exit
+  // inside `node -e` crashes with 0xC0000409. The probe exits 0 only on 2xx.
+  execFileSync(
+    process.execPath,
+    [
+      '-e',
+      "const r=require('http').get(process.argv[1],x=>process.exit(x.statusCode>=200&&x.statusCode<300?0:1));r.on('error',()=>process.exit(1));r.setTimeout(4000,()=>{r.destroy();process.exit(1)})",
+      `${API}/health`,
+    ],
+    { timeout: 6000, stdio: 'ignore' },
   );
+  serverUp = true;
+} catch {
+  serverUp = false;
+}
+
+// CI must never go green without real verification. When every test is
+// registered as it.skip, Jest never runs beforeAll — so this guard has to fire
+// at MODULE LOAD, otherwise a down backend produces a green CI run.
+if (!serverUp && process.env.CI) {
+  throw new Error(`[e2e] backend not reachable at ${API} — refusing a false-green CI run`);
+}
+
+/**
+ * A no-op `return` here used to make Jest count skipped tests as PASSED — the
+ * suite could report "23 passed" with no backend running. Choosing it.skip at
+ * REGISTRATION time reports them as skipped, which cannot be mistaken for
+ * coverage. CI additionally fails hard in beforeAll.
+ */
+const withIt = (name: string, fn: () => unknown, timeout?: number) => {
+  const testFn = (async () => {
+    if (!serverUp) {
+      throw new Error(`[e2e] backend unreachable — cannot verify "${name}"`);
+    }
+    await fn();
+  }) as Parameters<typeof it>[1];
+  return serverUp ? it(name, testFn, timeout) : it.skip(name, testFn, timeout);
+};
 
 interface Session {
   cookie: string;
@@ -206,16 +242,13 @@ describe('Speakio two-role SaaS E2E (live server)', () => {
   const attemptIds: Record<string, string> = {};
 
   beforeAll(async () => {
-    try {
-      const health = await fetch(`${API}/health`, {
-        signal: AbortSignal.timeout(4000),
-      });
-      serverUp = health.ok;
-    } catch {
-      serverUp = false;
-    }
     if (!serverUp) {
-      console.warn(`[e2e] backend not reachable at ${API} — suite skipped`);
+      const message = `[e2e] backend not reachable at ${API}`;
+      // CI must never go green without real verification.
+      if (process.env.CI) {
+        throw new Error(`${message} — refusing a false-green CI run`);
+      }
+      console.warn(`${message} — tests were registered as skipped`);
       return;
     }
     admin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);

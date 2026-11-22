@@ -14,7 +14,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:backend": "npm --prefix backend run test:e2e",
-    "test:backend:unit": "npm --prefix backend test"
+    "test:backend:unit": "npm --prefix backend test",
+    "test:db": "node ops/db-integrity-check.cjs",
+    "test:load": "node ops/load-test.cjs",
+    "test:features": "node ops/feature-verification.cjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -48,7 +51,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "^16.4.6",
     "prettier": "^3.8.3",
     "prettier-plugin-tailwindcss": "^0.8.0",
     "tailwindcss": "^4",

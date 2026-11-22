@@ -5,6 +5,7 @@ import { AlertCircle, CheckCircle2, Loader2, Search, ShieldCheck, UserCog } from
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConfirmationModal } from "@/components/ui/confirmation-modal"
+import { useSessionUser } from "@/components/user-session-provider"
 import { apiFetch } from "@/lib/api-client"
 
 interface ManagedUser {
@@ -42,8 +43,12 @@ export default function UsersAdminPage() {
   const [suspendTarget, setSuspendTarget] = useState<ManagedUser | null>(null)
   const [suspending, setSuspending] = useState(false)
   const [successInfo, setSuccessInfo] = useState<string | null>(null)
+  const [roleTarget, setRoleTarget] = useState<{ user: ManagedUser; role: "USER" | "ADMIN" } | null>(null)
+  const currentUser = useSessionUser()
 
+  const fetchSeqRef = React.useRef(0)
   const fetchUsers = useCallback(async () => {
+    const seq = ++fetchSeqRef.current
     setLoading(true)
     setError(null)
     const params = new URLSearchParams()
@@ -51,6 +56,7 @@ export default function UsersAdminPage() {
     if (roleFilter) params.set("role", roleFilter)
     if (statusFilter) params.set("status", statusFilter)
     const { data, error: fetchError } = await apiFetch<ManagedUser[]>(`/users?${params.toString()}`)
+    if (seq !== fetchSeqRef.current) return
     if (fetchError || !data) {
       setError(fetchError?.message ?? "Failed to load users.")
       setUsers(null)
@@ -219,8 +225,11 @@ export default function UsersAdminPage() {
                       <select
                         aria-label={`Change role for ${user.name}`}
                         value={user.role}
-                        disabled={busyId === user.id}
-                        onChange={(e) => void changeRole(user, e.target.value)}
+                        disabled={busyId === user.id || user.id === currentUser.id}
+                        onChange={(e) => {
+                          const next = e.target.value as "USER" | "ADMIN"
+                          if (next !== user.role) setRoleTarget({ user, role: next })
+                        }}
                         className="h-8 rounded-lg border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring cursor-pointer"
                       >
                         {ROLES.map((r) => (
@@ -260,7 +269,7 @@ export default function UsersAdminPage() {
                       <Button
                         variant={user.status === "ACTIVE" ? "outline" : "default"}
                         size="sm"
-                        disabled={busyId === user.id}
+                        disabled={busyId === user.id || user.id === currentUser.id}
                         onClick={() => setSuspendTarget(user)}
                         className="cursor-pointer gap-1.5"
                       >
@@ -293,12 +302,39 @@ export default function UsersAdminPage() {
         cancelLabel="Cancel"
         isSubmitting={suspending}
         error={suspendError}
-        onConfirm={() => void confirmSuspend()}
+        onConfirm={async () => {
+          await confirmSuspend()
+        }}
         onCancel={() => {
           setSuspendError(null)
           setSuspendTarget(null)
         }}
         details={suspendTarget ? `User: ${suspendTarget.name} (${suspendTarget.email}) | Role: ${suspendTarget.role}` : undefined}
+      />
+
+      <ConfirmationModal
+        isOpen={roleTarget != null}
+        title={roleTarget?.role === "ADMIN" ? "Grant administrator access?" : "Remove administrator access?"}
+        description={
+          roleTarget?.role === "ADMIN"
+            ? "This user will gain full admin access, including user management and question bank controls. Only grant this to trusted staff."
+            : "This user will lose all admin access and be signed out on their next request."
+        }
+        intent={roleTarget?.role === "ADMIN" ? "warning" : "destructive"}
+        confirmLabel={roleTarget?.role === "ADMIN" ? "Grant admin access" : "Remove admin access"}
+        cancelLabel="Cancel"
+        isSubmitting={busyId === roleTarget?.user.id}
+        error={rowError && roleTarget && rowError.id === roleTarget.user.id ? rowError.message : null}
+        onConfirm={async () => {
+          if (!roleTarget) return
+          await changeRole(roleTarget.user, roleTarget.role)
+          setRoleTarget(null)
+        }}
+        onCancel={() => {
+          setRowError(null)
+          setRoleTarget(null)
+        }}
+        details={roleTarget ? `User: ${roleTarget.user.name} (${roleTarget.user.email}) | Current role: ${roleTarget.user.role}` : undefined}
       />
     </div>
   )

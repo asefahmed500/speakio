@@ -269,36 +269,51 @@ export class TestsService {
     });
   }
 
-  /** Deleting is only safe while no student history references the content. */
-  async deleteSet(testSetId: string) {
-    const attemptsCount = await this.prisma.attempt.count({
-      where: { testSetId },
-    });
-    if (attemptsCount > 0) {
-      throw new ConflictException(
-        `This test set has ${attemptsCount} attempt(s) and cannot be deleted — its history is part of student records.`,
-      );
-    }
-    await this.prisma.testSet.delete({ where: { id: testSetId } });
-    return { success: true };
+  /**
+   * Deleting is only safe while no student history references the content.
+   * The parent row is locked FOR UPDATE for the whole check+delete: inserting
+   * an Attempt takes a KEY SHARE lock on that same TestSet row (FK), so a
+   * concurrent attempt start cannot slip in between the count and the delete
+   * and lose its history to the cascade.
+   */
+  private async lockTestSet(tx: Prisma.TransactionClient, testSetId: string) {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM test_sets WHERE id = ${testSetId} FOR UPDATE
+    `;
+    if (rows.length === 0) throw new NotFoundException('Test set not found');
   }
 
-  async deleteQuestion(questionId: string) {
-    const question = await this.prisma.question.findUnique({
-      where: { id: questionId },
-      select: { id: true, testSetId: true },
+  async deleteSet(testSetId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockTestSet(tx, testSetId);
+      const attemptsCount = await tx.attempt.count({ where: { testSetId } });
+      if (attemptsCount > 0) {
+        throw new ConflictException(
+          `This test set has ${attemptsCount} attempt(s) and cannot be deleted — its history is part of student records.`,
+        );
+      }
+      await tx.testSet.delete({ where: { id: testSetId } });
+      return { success: true };
     });
-    if (!question) throw new NotFoundException('Question not found');
-    const attemptsCount = await this.prisma.attempt.count({
-      where: { testSetId: question.testSetId },
+  }
+
+  async deleteQuestion(testSetId: string, questionId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.lockTestSet(tx, testSetId);
+      const question = await tx.question.findFirst({
+        where: { id: questionId, testSetId },
+        select: { id: true },
+      });
+      if (!question) throw new NotFoundException('Question not found in this test set');
+      const attemptsCount = await tx.attempt.count({ where: { testSetId } });
+      if (attemptsCount > 0) {
+        throw new ConflictException(
+          'Questions inside a set that already has attempts cannot be removed.',
+        );
+      }
+      await tx.question.delete({ where: { id: questionId } });
+      return { success: true };
     });
-    if (attemptsCount > 0) {
-      throw new ConflictException(
-        'Questions inside a set that already has attempts cannot be removed.',
-      );
-    }
-    await this.prisma.question.delete({ where: { id: questionId } });
-    return { success: true };
   }
 
   /**

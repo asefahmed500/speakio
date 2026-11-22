@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useEffect, useMemo, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import {
   AlertCircle,
   CheckCircle2,
@@ -164,15 +165,44 @@ export default function StudyPlanPage() {
       return
     }
     await persist({
-      examDate: examDate || null,
+      examDate: toIsoDateTime(examDate),
       dailyCommitmentMinutes: minutes,
       weakestSkill,
     })
   }
 
+  /**
+   * The date input yields YYYY-MM-DD; the API requires a full ISO datetime.
+   * Anchor at local noon so the UTC conversion never shifts the calendar day
+   * for any timezone within ±12 hours.
+   */
+  function toIsoDateTime(date: string): string | null {
+    if (!date) return null
+    const parsed = new Date(`${date}T12:00:00`)
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+  }
+
+  const router = useRouter()
+
   const handleGenerate = async () => {
     setGenerating(true)
     setPlanError(null)
+    // The coach agent reads preferences from the database, so persist the
+    // currently displayed form values before asking it to regenerate. Abort if
+    // that write failed — otherwise the plan is built on stale preferences and
+    // the failure toast is erased by the later successful plan save.
+    const minutes = Number(dailyMinutes)
+    if (Number.isFinite(minutes) && minutes >= 10 && minutes <= 600) {
+      const prefsSaved = await persist({
+        examDate: toIsoDateTime(examDate),
+        dailyCommitmentMinutes: minutes,
+        weakestSkill,
+      })
+      if (!prefsSaved) {
+        setGenerating(false)
+        return
+      }
+    }
     const { data, error } = await apiFetch<{ milestones: StudyPlanMilestone[] }>("/ai/study-plan", {
       method: "POST",
       json: {},
@@ -186,7 +216,10 @@ export default function StudyPlanPage() {
       setPlanError(`AI coach unavailable — using standard template. (${error.message})`)
     }
     const ok = await persist({ studyPlan: next })
-    if (ok) setPlan(next)
+    if (ok) {
+      setPlan(next)
+      router.refresh()
+    }
     setGenerating(false)
   }
 
@@ -196,6 +229,7 @@ export default function StudyPlanPage() {
     setPlan(next)
     const ok = await persist({ studyPlan: next })
     if (!ok) setPlan(plan)
+    else router.refresh()
   }
 
   return (

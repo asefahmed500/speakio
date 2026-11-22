@@ -30,7 +30,11 @@ function isTypingTarget(target: EventTarget | null) {
     target.isContentEditable ||
     target.tagName === "INPUT" ||
     target.tagName === "TEXTAREA" ||
-    target.tagName === "SELECT"
+    target.tagName === "SELECT" ||
+    // A bare "d" must not toggle the theme while the user is interacting with
+    // a control or a dialog.
+    target.closest('[role="dialog"]') !== null ||
+    target.closest("button, a, [role='button']") !== null
   )
 }
 

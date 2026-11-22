@@ -157,6 +157,12 @@ model Question {
   @@map("questions")
 }
 
+/// IMPORTANT: the partial unique index `attempts_userId_testSetId_active_key`
+/// (one IN_PROGRESS attempt per user+set) is hand-written in
+/// prisma/migrations/20260910000000_refresh_tokens_attempt_uniqueness_history_fk/migration.sql
+/// because Prisma cannot express WHERE clauses. NEVER let `prisma migrate dev`
+/// drop it. Use `prisma migrate deploy` in production and verify it with
+/// `node ops/db-integrity-check.cjs`.
 model Attempt {
   id                   String        @id @default(uuid())
   userId               String
@@ -217,6 +223,12 @@ model Score {
   @@map("scores")
 }
 
+/// IMPORTANT: the partial unique index `certificates_userId_active_key`
+/// (one ACTIVE certificate per user) is hand-written in
+/// prisma/migrations/20260909000000_audit_indexes_and_certificate_guard/migration.sql
+/// because Prisma cannot express WHERE clauses. NEVER let `prisma migrate dev`
+/// drop it. Use `prisma migrate deploy` in production and verify it with
+/// `node ops/db-integrity-check.cjs`.
 model Certificate {
   id                String    @id @default(uuid())
   userId            String

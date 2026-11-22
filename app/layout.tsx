@@ -16,12 +16,9 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className="scroll-smooth font-sans">
+    <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth" className="scroll-smooth font-sans">
       <head>
-        {/* esbuild's __name helper is referenced by some injected/eval'd
-            scripts (browser tooling, devtools extensions). Define it as a
-            harmless global so those scripts never throw
-            "ReferenceError: __name is not defined" on our pages. */}
+        {/* esbuild's __name helper — harmless global for injected browser scripts. */}
         <script
           dangerouslySetInnerHTML={{
             __html:
@@ -30,8 +27,6 @@ export default function RootLayout({
         />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        {/* Root layout — applies to every page. Google Fonts via link keeps
-            builds working in networks that block fonts.gstatic.com at build. */}
         {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
           href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Inter:wght@400;500;600&display=swap"

@@ -15,12 +15,13 @@ interface AttemptRow {
   bandScore: number | null
 }
 
+// Monochrome status tones — the label carries the meaning, not a hue.
 const STATUS_TONE: Record<AttemptRow["status"], string> = {
-  IN_PROGRESS: "border-sky-500/30 bg-sky-500/10 text-sky-700",
-  SUBMITTED: "border-amber-500/30 bg-amber-500/10 text-amber-700",
-  SCORING: "border-purple-500/30 bg-purple-500/10 text-purple-700 animate-pulse",
-  NEEDS_REVIEW: "border-amber-500/30 bg-amber-500/10 text-amber-700",
-  COMPLETED: "border-border bg-muted text-emerald-700",
+  IN_PROGRESS: "border-black/15 bg-white text-black/60",
+  SUBMITTED: "border-black/20 bg-[#fafafa] text-black/70",
+  SCORING: "border-black/15 bg-white text-black animate-pulse",
+  NEEDS_REVIEW: "border-black/20 bg-[#fafafa] text-black/70",
+  COMPLETED: "border-black bg-black text-white",
 }
 
 const STATUS_LABEL: Record<AttemptRow["status"], string> = {
@@ -43,8 +44,8 @@ export default function ResultsIndexPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchAttempts = useCallback(async () => {
-    setLoading(true)
+  const fetchAttempts = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true)
     setError(null)
     const { data, error: fetchError } = await apiFetch<AttemptRow[]>("/attempts")
     if (fetchError || !data) {
@@ -59,23 +60,34 @@ export default function ResultsIndexPage() {
   useEffect(() => {
     let active = true
     void Promise.resolve().then(() => {
-      if (active) return fetchAttempts()
+      if (active) return fetchAttempts(true)
     })
     return () => {
       active = false
     }
   }, [fetchAttempts])
 
+  // Poll only while a submission is awaiting/publishing a band, so SCORING
+  // rows update without a manual reload.
+  const hasPending = attempts?.some(
+    (a) => a.status === "SCORING" || a.status === "SUBMITTED" || a.status === "NEEDS_REVIEW"
+  ) ?? false
+  useEffect(() => {
+    if (!hasPending) return
+    const id = setInterval(() => void fetchAttempts(), 8_000)
+    return () => clearInterval(id)
+  }, [hasPending, fetchAttempts])
+
   return (
     <div className="flex-1 bg-background text-foreground min-h-0 relative overflow-hidden">
       {/* Background ambient lighting */}
       <div className="pointer-events-none absolute -top-40 right-1/4 h-96 w-96 rounded-full bg-muted blur-[120px]" />
-      <div className="pointer-events-none absolute top-1/3 -left-20 h-96 w-96 rounded-full bg-sky-500/10 blur-[140px]" />
+      <div className="pointer-events-none absolute top-1/3 -left-20 h-96 w-96 rounded-full bg-black/5 blur-[140px]" />
 
       <div className="relative w-full mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-xs font-mono uppercase tracking-widest text-emerald-700 mb-3">
+            <div className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-[#fafafa] px-3 py-1 text-xs font-mono uppercase tracking-widest text-black/60 mb-3">
               Official IELTS Record Vault
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
@@ -97,7 +109,7 @@ export default function ResultsIndexPage() {
           <div className="rounded-2xl border border-destructive/40 bg-destructive/10 p-6 text-center space-y-3 backdrop-blur-md">
             <AlertCircle className="h-6 w-6 text-destructive mx-auto" aria-hidden />
             <p className="text-sm text-destructive">{error}</p>
-            <Button variant="outline" size="sm" onClick={() => void fetchAttempts()}>
+            <Button variant="outline" size="sm" onClick={() => void fetchAttempts(true)}>
               Retry
             </Button>
           </div>
@@ -163,7 +175,7 @@ export default function ResultsIndexPage() {
                     {a.bandScore != null && (
                       <div className="text-right">
                         <div className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground">IELTS Band</div>
-                        <div className="text-2xl font-bold font-mono tabular-nums text-emerald-700">
+                        <div className="text-2xl font-bold font-mono tabular-nums text-black">
                           {a.bandScore.toFixed(1)}
                         </div>
                       </div>

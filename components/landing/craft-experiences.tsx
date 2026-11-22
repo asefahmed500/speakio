@@ -1,8 +1,9 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
+import Link from "next/link"
 import { AnimatePresence, motion } from "motion/react"
-import { BookOpen, FileText, Headphones, Mic, Plus, Sparkles } from "lucide-react"
+import { BookOpen, FileText, Headphones, Mic, ArrowRight, Sparkles } from "lucide-react"
 import { AnimatedWords, EASE, FadeUp } from "@/components/landing/motion"
 import { cn } from "@/lib/utils"
 
@@ -31,14 +32,15 @@ const SKILLS = [
 function SkillCarouselCard() {
   const { started, onViewportEnter } = useInViewOnce()
   const [active, setActive] = useState(0)
+  const [userSelected, setUserSelected] = useState(false)
 
   useEffect(() => {
-    if (!started) return
+    if (!started || userSelected) return
     const id = window.setInterval(() => {
       setActive((current) => (current + 1) % SKILLS.length)
     }, 2800)
     return () => window.clearInterval(id)
-  }, [started])
+  }, [started, userSelected])
 
   return (
     <motion.div
@@ -69,10 +71,16 @@ function SkillCarouselCard() {
             const distance = Math.abs(offset)
             const isActive = offset === 0
             return (
-              <motion.div
+              <motion.button
                 key={skill.name}
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => {
+                  setActive(i)
+                  setUserSelected(true)
+                }}
                 className={cn(
-                  "flex items-center gap-3 rounded-2xl px-4 backdrop-blur-md",
+                  "flex cursor-pointer items-center gap-3 rounded-2xl px-4 backdrop-blur-md",
                   isActive
                     ? "w-[min(300px,74vw)] bg-white/25 shadow-lg shadow-black/25"
                     : "w-[min(261px,70vw)] bg-white/15"
@@ -103,7 +111,7 @@ function SkillCarouselCard() {
                 >
                   {skill.name}
                 </span>
-              </motion.div>
+              </motion.button>
             )
           })}
         </div>
@@ -191,7 +199,7 @@ function AiConversationCard() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.35, ease: EASE }}
             >
-              Score my Task 2 essay — aiming for Band 7.5.
+              Example submission: “Score my Task 2 essay — aiming for Band 7.5.”
             </motion.p>
           ) : (
             <motion.div
@@ -288,7 +296,7 @@ function AdaptabilityCard() {
 
       <div className="flex-1" />
 
-      {/* Configuration rows — a real, configurable interface. */}
+      {/* Plan preview — each row opens the real study-plan settings. */}
       <div className="relative">
         <div
           className="pointer-events-none absolute inset-x-0 -top-12 h-24 bg-gradient-to-b from-[#9E948B] to-transparent"
@@ -303,13 +311,16 @@ function AdaptabilityCard() {
               animate={started ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.55, delay: 1.1 + i * 0.18, ease: EASE }}
             >
-              <span className="text-sm font-medium text-neutral-900">{row.label}</span>
-              <span className="flex items-center gap-3">
-                <span className="text-sm text-neutral-500">{row.value}</span>
-                <span className="flex size-7 items-center justify-center rounded-full bg-neutral-100 text-neutral-700">
-                  <Plus className="size-3.5" />
+              <Link
+                href="/study-plan"
+                className="flex w-full items-center justify-between text-neutral-900 hover:text-primary"
+              >
+                <span className="text-sm font-medium">{row.label}</span>
+                <span className="flex items-center gap-3">
+                  <span className="text-sm text-neutral-500">{row.value}</span>
+                  <ArrowRight className="size-3.5 text-neutral-700" aria-hidden />
                 </span>
-              </span>
+              </Link>
             </motion.div>
           ))}
         </div>

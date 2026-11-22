@@ -52,7 +52,8 @@ export class AiService {
     // ALWAYS the reasoning model as the last resort — account entitlements
     // differ per model (a key may only be provisioned for one), so a chain
     // that can never reach the reasoning model would hard-fail on 429s.
-    const reasoningModel = process.env.ZAI_MODEL_REASONING || 'glm-5';
+    const reasoningModel =
+      process.env.ZAI_MODEL_REASONING || '@cf/zai-org/glm-4.7-flash';
     const chain = [primaryModel];
     let next = this.modelRouter.getFallbackModel(primaryModel);
     while (chain.length < 3 && !chain.includes(next)) {

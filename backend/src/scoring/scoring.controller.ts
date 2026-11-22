@@ -12,6 +12,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { WritingScoringAgent } from '../agents/writing-scoring.agent';
 import { PrismaService } from '../prisma/prisma.service';
@@ -56,6 +57,38 @@ export class ScoringController {
     private readonly prisma: PrismaService,
   ) {}
 
+  /**
+   * Resolves the prompt the student actually answered, honoring the attempt's
+   * immutable question snapshot. Multi-prompt AI sets must not be scored
+   * against whichever question happens to sort first.
+   */
+  private async findAnsweredWritingQuestion(
+    attemptId: string,
+    testSetId: string,
+    questionIdsJson: unknown,
+  ) {
+    const attempt = await this.prisma.attempt.findUnique({
+      where: { id: attemptId },
+      select: { answersJson: true },
+    });
+    const answers = (attempt?.answersJson ?? {}) as Record<string, string>;
+    const snapshotIds = Array.isArray(questionIdsJson)
+      ? (questionIdsJson as string[])
+      : null;
+    const questions = await this.prisma.question.findMany({
+      where: {
+        testSetId,
+        ...(snapshotIds ? { id: { in: snapshotIds } } : {}),
+      },
+      orderBy: { orderIndex: 'asc' },
+    });
+    return (
+      questions.find((q) => (answers[q.id] ?? '').trim().length > 0) ??
+      questions[0] ??
+      null
+    );
+  }
+
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('writing')
   async scoreWriting(
@@ -92,12 +125,9 @@ export class ScoringController {
       }
     }
 
-    // Prompt and task type are derived server-side from the bound question —
+    // Prompt and task type are derived server-side from the answered question —
     // the client can never shape the rubric context seen by the model.
-    const writingQuestion = await this.prisma.question.findFirst({
-      where: { testSetId: attempt.testSetId },
-      orderBy: { orderIndex: 'asc' },
-    });
+    const writingQuestion = await this.findAnsweredWritingQuestion(attempt.id, attempt.testSetId, attempt.questionIdsJson);
     if (!writingQuestion) {
       throw new BadRequestException(
         'Attempt has no writing prompt to score against',
@@ -112,6 +142,19 @@ export class ScoringController {
         ? 'TASK_1'
         : 'TASK_2';
 
+    // Score the text the student actually submitted, never client-supplied
+    // arbitrary prose. `studentEssay` stays in the DTO for contract
+    // compatibility but is deliberately ignored.
+    const saved = await this.prisma.attempt.findUnique({
+      where: { id: body.attemptId },
+      select: { answersJson: true },
+    });
+    const savedAnswers = (saved?.answersJson ?? {}) as Record<string, string>;
+    const submittedEssay = (savedAnswers[writingQuestion.id] ?? '').trim();
+    if (submittedEssay.length === 0) {
+      throw new BadRequestException('This attempt has no essay to score');
+    }
+
     // The agent can run two full LLM passes and retries, far longer than the
     // edge limit. Bound the awaited HTTP work so a slow provider yields a 503
     // instead of a 524; scoring itself continues and publishes in background.
@@ -122,7 +165,7 @@ export class ScoringController {
           ? `${writingQuestion.prompt}\n\nDATA SUMMARY: ${writingQuestion.passage}`
           : writingQuestion.prompt,
         taskType,
-        studentEssay: body.studentEssay,
+        studentEssay: submittedEssay,
         userContext: { userId: req.user.sub, role: req.user.role },
       }),
       'writing scoring',
@@ -219,11 +262,8 @@ export class ScoringController {
     if (!essayEntry)
       throw new BadRequestException('Attempt has no essay content to score');
 
-    // Derive the real prompt/task from the bound question, not placeholders.
-    const writingQuestion = await this.prisma.question.findFirst({
-      where: { testSetId: attempt.testSetId },
-      orderBy: { orderIndex: 'asc' },
-    });
+    // Derive the real prompt/task from the answered question, not placeholders.
+    const writingQuestion = await this.findAnsweredWritingQuestion(attempt.id, attempt.testSetId, attempt.questionIdsJson);
     if (!writingQuestion)
       throw new BadRequestException(
         'Attempt has no writing prompt to score against',
@@ -334,6 +374,15 @@ export class ScoringController {
         },
         update: {
           bandScore: body.finalBand,
+          // Clear the AI sub-scores: leaving them under a different overall
+          // band shows contradictory criterion bands on the results page.
+          taskAchievement: null,
+          coherenceCohesion: null,
+          lexicalResource: null,
+          grammaticalAccuracy: null,
+          fluencyCoherence: null,
+          pronunciation: null,
+          inlineFeedbackJson: Prisma.JsonNull,
           feedbackSummary:
             body.instructorNotes || 'Admin override of the AI review band.',
           scoredBy: 'ADMIN_OVERRIDE',

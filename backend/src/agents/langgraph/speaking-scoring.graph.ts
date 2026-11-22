@@ -178,31 +178,49 @@ function compileGraph() {
   const scoreSpeaking = async (state: typeof GraphState.State) => {
     if (state.error) return {};
     const userMessage = `CUE CARD:\n${state.cueCardPrompt}\n\nAUDIO DURATION: ${Math.round(state.audioDurationSeconds)} seconds\n\nASR TRANSCRIPT:\n${state.transcript}`;
-    const completion = await invokeWithBackoff(() =>
-      model.invoke([
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
-      ]),
+
+    // Bounded parse-retry: a malformed first response gets one corrective
+    // nudge before the pass fails (mirrors the writing scoring graph).
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: userMessage },
+        ];
+        if (attempt > 0 && lastError) {
+          messages.push({
+            role: 'user',
+            content: `Your previous response was not usable: ${lastError.message}. Respond again with exactly one JSON object matching the required schema and no other text.`,
+          });
+        }
+        const completion = await invokeWithBackoff(() => model.invoke(messages));
+        const rawText =
+          typeof completion.content === 'string'
+            ? completion.content
+            : JSON.stringify(completion.content);
+        const validated = ScoreSchema.parse(extractJsonObject(rawText));
+        const score: SpeakingScore = {
+          ...validated,
+          overallBand: clampToBand(
+            (validated.fluencyCoherence +
+              validated.lexicalResource +
+              validated.grammaticalAccuracy +
+              validated.pronunciation) /
+              4,
+          ),
+        };
+        return {
+          rawScore: score,
+          tokenUsage: extractTokenUsage(completion),
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+    throw new Error(
+      `Speaking scoring model did not return valid structured output: ${lastError?.message ?? 'unknown error'}`,
     );
-    const rawText =
-      typeof completion.content === 'string'
-        ? completion.content
-        : JSON.stringify(completion.content);
-    const validated = ScoreSchema.parse(extractJsonObject(rawText));
-    const score: SpeakingScore = {
-      ...validated,
-      overallBand: clampToBand(
-        (validated.fluencyCoherence +
-          validated.lexicalResource +
-          validated.grammaticalAccuracy +
-          validated.pronunciation) /
-          4,
-      ),
-    };
-    return {
-      rawScore: score,
-      tokenUsage: extractTokenUsage(completion),
-    };
   };
 
   const validateAndClamp = (state: typeof GraphState.State) => {

@@ -18,6 +18,8 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
+        /* Joi: black 9999px pill used inside the floating navigation capsule. */
+        pill: "rounded-full bg-black text-white hover:bg-black/80 hover:scale-[1.03] active:scale-[0.98]",
       },
       size: {
         default:
@@ -31,6 +33,8 @@ const buttonVariants = cva(
         "icon-sm":
           "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-9",
+        /* Joi primary conversion control — 20px radius, 72px tall, 22px label. */
+        hero: "h-[72px] gap-3 rounded-[var(--radius-lg)] px-11 text-[22px] leading-none hover:scale-[1.02] active:scale-[0.98]",
       },
     },
     defaultVariants: {

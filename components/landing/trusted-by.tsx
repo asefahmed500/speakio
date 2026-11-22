@@ -4,29 +4,16 @@ import React from "react"
 import { motion } from "motion/react"
 import { EASE } from "@/components/landing/motion"
 
-const BRANDS = [
-  "PREPKART",
-  "IELTS HUB",
-  "CAMPUSLANE",
-  "STUDY ABROAD CO",
-  "VERBAL & CO",
-  "MIGRATEN",
-  "BANDSQUARE",
-  "ATLAS ENGLISH",
+/**
+ * Real platform facts — no invented "trusted by" logos or social proof.
+ * Every item below is a capability implemented in the product.
+ */
+const CAPABILITIES = [
+  "Four IELTS skills",
+  "AI criterion scoring",
+  "Server-timed exams",
+  "Public certificate lookup",
 ]
-
-function BrandWordmark({ name }: { name: string }) {
-  return (
-    <span className="flex shrink-0 items-center gap-2.5 px-8 text-neutral-400 sm:px-10">
-      <svg viewBox="0 0 12 12" aria-hidden className="size-2.5 fill-current">
-        <path d="M6 0 L12 6 L6 12 L0 6 Z" />
-      </svg>
-      <span className="font-display text-sm font-medium tracking-[0.18em] whitespace-nowrap sm:text-base">
-        {name}
-      </span>
-    </span>
-  )
-}
 
 export function TrustedBy() {
   return (
@@ -38,26 +25,24 @@ export function TrustedBy() {
         viewport={{ once: true, amount: 0.5 }}
         transition={{ duration: 0.6, ease: EASE }}
       >
-        Trusted by <span className="font-accent text-neutral-900">learners worldwide</span>
+        Everything you need in <span className="font-accent text-neutral-900">one place</span>
       </motion.p>
 
       <motion.div
-        className="relative mt-10 overflow-hidden sm:mt-12"
+        className="mx-auto mt-10 grid max-w-5xl grid-cols-2 gap-3 px-4 sm:mt-12 sm:grid-cols-4 sm:px-6"
         initial={{ opacity: 0 }}
         whileInView={{ opacity: 1 }}
         viewport={{ once: true, amount: 0.3 }}
         transition={{ duration: 0.8, delay: 0.15, ease: EASE }}
       >
-        {/* Duplicated list — seamless -50% loop with no visible gap. */}
-        <div className="flex w-max animate-marquee">
-          {[...BRANDS, ...BRANDS].map((brand, i) => (
-            <BrandWordmark key={`${brand}-${i}`} name={brand} />
-          ))}
-        </div>
-
-        {/* Soft edge masks — logos enter and dissolve instead of clipping. */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-white to-transparent sm:w-28" />
-        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-white to-transparent sm:w-28" />
+        {CAPABILITIES.map((capability) => (
+          <div
+            key={capability}
+            className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-5 text-center text-sm font-medium text-neutral-700"
+          >
+            {capability}
+          </div>
+        ))}
       </motion.div>
     </section>
   )

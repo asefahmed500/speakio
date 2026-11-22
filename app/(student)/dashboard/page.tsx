@@ -102,7 +102,7 @@ export default function DashboardPage() {
   }, [fetchStats])
 
   const firstName = user.name.split(" ")[0]
-  const targetBand = user.targetBand ?? 7.5
+  const targetBand = user.targetBand ?? 7.0
 
   return (
     <div className="flex-1 bg-background text-foreground min-h-0">
@@ -157,7 +157,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-xl border border-border bg-surface-subtle p-4 text-center">
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Overall Band</p>
-            <p className="text-2xl font-bold font-mono text-emerald-700 mt-1">
+            <p className="text-2xl font-bold font-mono text-black mt-1">
               {stats?.overallBand && stats.overallBand > 0 ? stats.overallBand.toFixed(1) : "—"}
             </p>
           </div>
@@ -169,7 +169,7 @@ export default function DashboardPage() {
           </div>
           <div className="rounded-xl border border-border bg-surface-subtle p-4 text-center">
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Target Goal</p>
-            <p className="text-2xl font-bold font-mono text-sky-700 mt-1">
+            <p className="text-2xl font-bold font-mono text-black mt-1">
               {targetBand.toFixed(1)}
             </p>
           </div>
@@ -247,7 +247,7 @@ export default function DashboardPage() {
                     <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded border border-border text-muted-foreground">
                       {attempt.status}
                     </span>
-                    <span className="font-mono font-semibold text-emerald-700">
+                    <span className="font-mono font-semibold text-black">
                       {attempt.bandScore != null ? attempt.bandScore.toFixed(1) : "—"}
                     </span>
                   </div>

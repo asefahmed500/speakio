@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -45,16 +46,12 @@ export default function ProfilePage() {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [profileSaved, setProfileSaved] = useState(false)
-  const [passwordSaved, setPasswordSaved] = useState(false)
   const profileTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const passwordTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const p = profileTimer
-    const q = passwordTimer
     return () => {
       if (p.current) clearTimeout(p.current)
-      if (q.current) clearTimeout(q.current)
     }
   }, [])
 
@@ -81,6 +78,8 @@ export default function ProfilePage() {
     defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
   })
 
+  const router = useRouter()
+
   const saveProfile = async (data: ProfileData) => {
     setProfileSaving(true)
     setProfileError(null)
@@ -93,6 +92,10 @@ export default function ProfilePage() {
       setProfileError(error.message)
       return
     }
+    // The session user is server-verified in a layout. Refresh the RSC payload
+    // so the sidebar name/target band and this form's defaults stay in sync.
+    profile.reset({ name: data.name.trim(), targetBand: data.targetBand })
+    router.refresh()
     flash(setProfileSaved, profileTimer)
   }
 
@@ -109,7 +112,11 @@ export default function ProfilePage() {
       return
     }
     password.reset()
-    flash(setPasswordSaved, passwordTimer)
+    // Changing the password revokes every refresh token, including this
+    // device's. Clear the cookies now and send the user back to sign in rather
+    // than leaving a session that dies silently when the access token expires.
+    await apiFetch("/auth/logout", { method: "POST" })
+    router.push("/login?passwordChanged=1")
   }
 
   return (
@@ -292,11 +299,9 @@ export default function ProfilePage() {
                 {passwordSaving && <Loader2 className="mr-1.5 size-3 animate-spin" />}
                 Update Password
               </Button>
-              {passwordSaved && (
-                <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-700 font-mono">
-                  <CheckCircle2 className="size-3.5" /> Password updated
-                </span>
-              )}
+              <span className="text-[11px] text-muted-foreground">
+                Changing your password signs you out everywhere, including this device.
+              </span>
             </div>
           </form>
         </section>

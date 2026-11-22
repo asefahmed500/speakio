@@ -115,7 +115,7 @@ export class AiQuestionGeneratorService {
       ? `\nTopic focus: ${params.topic}.`
       : '\nChoose an engaging topic yourself and report it in "topic".';
 
-    const { data, result } = await this.aiService
+    const { data } = await this.aiService
       .executeStructuredTask<z.infer<typeof modelOutputSchema>>({
         taskType: 'EXTRACTION',
         responseFormat: { type: 'json_object' },
@@ -153,7 +153,6 @@ Rules: correctAnswer must match one option verbatim; MCQ options have no letter 
         'The AI generator produced no valid questions for this configuration. Adjust the request and retry.',
       );
     }
-    void result;
     return {
       topic: data.topic.trim().slice(0, 80),
       passage: data.passage?.trim() || null,

@@ -36,9 +36,16 @@ function LoginForm() {
   })
 
   React.useEffect(() => {
-    void useAuthUiStore.persist.rehydrate()
-    const draft = useAuthUiStore.getState().emailDraft
-    if (draft) setValue("email", draft)
+    let active = true
+    // Await rehydration before reading — with skipHydration the store is still
+    // at its default value when rehydrate() is merely fired and forgotten.
+    void Promise.resolve(useAuthUiStore.persist.rehydrate()).then(() => {
+      const draft = useAuthUiStore.getState().emailDraft
+      if (active && draft) setValue("email", draft)
+    })
+    return () => {
+      active = false
+    }
   }, [setValue])
 
   const nextPath = searchParams.get("next")
@@ -67,6 +74,12 @@ function LoginForm() {
         <h1 className="text-xl font-semibold tracking-tight">Sign in</h1>
         <p className="mt-1 text-xs text-neutral-500">Welcome back.</p>
       </div>
+
+      {searchParams.get("passwordChanged") === "1" && (
+        <p role="status" className="border-l-2 border-emerald-600 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          Password updated. Sign in again with your new password.
+        </p>
+      )}
 
       {serverError && (
         <p role="alert" className="border-l-2 border-[#111111] bg-neutral-50 px-3 py-2 text-xs text-neutral-700">

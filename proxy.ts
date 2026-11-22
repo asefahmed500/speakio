@@ -14,14 +14,16 @@ import type { NextRequest } from "next/server"
 function accessTokenIsFresh(token: string | undefined): boolean {
   if (!token) return false
   const parts = token.split(".")
-  if (parts.length !== 3) return true
+  // A token that is not even JWT-shaped is malformed, not "opaque" — treating
+  // it as fresh used to bounce /login -> /dashboard -> /login on junk cookies.
+  if (parts.length !== 3) return false
   try {
     const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/")
     const payload = JSON.parse(atob(base64)) as { exp?: number }
-    if (typeof payload.exp !== "number") return true
+    if (typeof payload.exp !== "number") return false
     return payload.exp > Math.floor(Date.now() / 1000) + 30
   } catch {
-    return true
+    return false
   }
 }
 

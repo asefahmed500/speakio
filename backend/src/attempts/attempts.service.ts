@@ -138,7 +138,7 @@ export class AttemptsService implements OnModuleInit {
     answers: Record<string, string>,
     timeRemainingSeconds?: number,
   ) {
-    const attempt = await this.getOwnedAttempt(userId, attemptId);
+    const attempt = await this.getOwnedAttempt(userId, attemptId, true);
     if (attempt.status !== AttemptStatus.IN_PROGRESS) {
       throw new ConflictException(
         `Attempt is ${attempt.status} and can no longer be modified`,
@@ -148,20 +148,25 @@ export class AttemptsService implements OnModuleInit {
       ...(attempt.answersJson as Record<string, string>),
       ...answers,
     };
+    // Server-authoritative clock: the client may only report a *decreasing*
+    // value, and never above this test's configured limit. A crafted request
+    // cannot extend the exam, and two tabs cannot fight to raise the timer.
+    const maxSeconds = attempt.testSet.timeLimitMinutes * 60;
+    const previous = attempt.timeRemainingSeconds ?? maxSeconds;
+    const safeTime =
+      typeof timeRemainingSeconds === 'number'
+        ? Math.max(
+            0,
+            Math.min(Math.floor(timeRemainingSeconds), previous, maxSeconds),
+          )
+        : undefined;
     // Conditional update: the attempt must still be IN_PROGRESS when the write
     // lands. An autosave racing a submit can no longer clobber graded answers.
     const result = await this.prisma.attempt.updateMany({
       where: { id: attemptId, status: AttemptStatus.IN_PROGRESS },
       data: {
         answersJson: mergedAnswers,
-        ...(typeof timeRemainingSeconds === 'number'
-          ? {
-              timeRemainingSeconds: Math.max(
-                0,
-                Math.min(6 * 60 * 60, Math.floor(timeRemainingSeconds)),
-              ),
-            }
-          : {}),
+        ...(safeTime !== undefined ? { timeRemainingSeconds: safeTime } : {}),
       },
     });
     if (result.count === 0) {
@@ -231,7 +236,15 @@ export class AttemptsService implements OnModuleInit {
         answersJson: mergedAnswers,
         timeRemainingSeconds:
           typeof timeRemainingSeconds === 'number'
-            ? Math.max(0, Math.floor(timeRemainingSeconds))
+            ? Math.max(
+                0,
+                Math.min(
+                  Math.floor(timeRemainingSeconds),
+                  attempt.timeRemainingSeconds ??
+                    testSet.timeLimitMinutes * 60,
+                  testSet.timeLimitMinutes * 60,
+                ),
+              )
             : undefined,
         submittedAt: new Date(),
         status: AttemptStatus.SUBMITTED,
@@ -449,13 +462,18 @@ export class AttemptsService implements OnModuleInit {
     answers: Record<string, string>,
   ) {
     const firstQuestion = questions[0];
-    const joined = answers[firstQuestion?.id ?? ''] ?? '';
-    const audioSegments = joined && joined.startsWith('data:audio')
-      ? joined.split('|')
-      : [];
-    const typedAnswer = joined && !joined.startsWith('data:audio')
-      ? joined.trim()
-      : '';
+    // Every speaking prompt in the served set is answerable. Audio segments
+    // from all questions are concatenated; typed answers are joined as lines.
+    const responses = questions
+      .map((q) => answers[q.id] ?? '')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const audioSegments = responses
+      .filter((value) => value.startsWith('data:audio'))
+      .flatMap((value) => value.split('|'));
+    const typedAnswer = responses
+      .filter((value) => !value.startsWith('data:audio'))
+      .join('\n');
     const typedWordCount = typedAnswer
       ? typedAnswer.split(/\s+/).filter(Boolean).length
       : 0;
@@ -736,7 +754,9 @@ export class AttemptsService implements OnModuleInit {
     const scores = await this.prisma.score.findMany({
       where: { attempt: { userId } },
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      // Enough history to find one latest score per skill even on busy
+      // accounts; groupBy would be cheaper but cannot use the relation filter.
+      take: 2000,
     });
     const latest = new Map<SkillType, number>();
     for (const s of scores) {

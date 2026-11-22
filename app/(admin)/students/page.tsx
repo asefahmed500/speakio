@@ -26,11 +26,14 @@ export default function StudentsPage() {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState("")
 
+  const fetchSeqRef = React.useRef(0)
   const fetchStudents = useCallback(async () => {
+    const seq = ++fetchSeqRef.current
     setLoading(true)
     setError(null)
     const params = query.trim() ? `?query=${encodeURIComponent(query.trim())}` : ""
     const { data, error: fetchError } = await apiFetch<StudentRow[]>(`/admin/students${params}`)
+    if (seq !== fetchSeqRef.current) return
     if (fetchError || !data) {
       setError(fetchError?.message ?? "Failed to load the student roster.")
       setStudents(null)

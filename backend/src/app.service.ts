@@ -53,12 +53,25 @@ export class AppService {
     let database: HealthReport['database'] = 'down';
     let latencyMs: number | null = null;
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await this.prisma.$queryRaw`SELECT 1`;
+      // A wedged DB connection must not hang /health forever and keep the
+      // orchestrator believing a dead pod is alive.
+      await Promise.race([
+        this.prisma.$queryRaw`SELECT 1`,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('DB probe timed out')), 3_000);
+          // Never let the timeout keep a Jest worker / serverless process
+          // alive after the DB probe has already settled.
+          timer.unref?.();
+        }),
+      ]);
       database = 'up';
       latencyMs = Date.now() - startedAt;
     } catch {
       database = 'down';
+    } finally {
+      if (timer) clearTimeout(timer);
     }
 
     return {

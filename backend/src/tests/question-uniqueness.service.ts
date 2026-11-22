@@ -69,11 +69,17 @@ export class QuestionUniquenessService {
       return freshShuffled.slice(0, take);
     }
 
-    // Pool exhausted: fill the remainder with the least-recently-seen first
-    // (history is desc by shownAt, so walking it backwards is the LRU order).
-    const rest = questions.filter((q) => !fresh.includes(q));
-    const restLru = [...rest].reverse();
-    return [...freshShuffled, ...restLru].slice(0, take);
+    // Pool exhausted: fill the remainder with the least-recently-seen first.
+    // Sort by the recorded shownAt timestamp (oldest first), not by the
+    // arbitrary orderIndex of the source pool.
+    const lastShown = new Map(history.map((h) => [h.questionId, h.shownAt.getTime()]));
+    const rest = questions
+      .filter((q) => !fresh.includes(q))
+      .sort(
+        (a, b) =>
+          (lastShown.get(a.id) ?? 0) - (lastShown.get(b.id) ?? 0),
+      );
+    return [...freshShuffled, ...rest].slice(0, take);
   }
 
   shuffle<T>(items: T[]): T[] {
