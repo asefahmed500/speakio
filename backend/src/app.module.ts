@@ -13,6 +13,7 @@ import { CertificatesModule } from './certificates/certificates.module';
 import { VocabularyModule } from './vocabulary/vocabulary.module';
 import { UsersModule } from './users/users.module';
 import { AdminModule } from './admin/admin.module';
+import { InternalModule } from './internal/internal.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -41,6 +42,7 @@ import { AppService } from './app.service';
     VocabularyModule,
     UsersModule,
     AdminModule,
+    InternalModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

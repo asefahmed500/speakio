@@ -76,3 +76,32 @@ const worker = {
 };
 
 export default worker;
+
+/**
+ * Cron trigger (see wrangler.jsonc). Vercel freezes a function as soon as its
+ * HTTP response is sent, so AI scoring cannot finish in the submit request.
+ * Each tick drives one pending attempt through the secured internal endpoint;
+ * the endpoint claims jobs atomically and retries failures on later ticks.
+ */
+export async function scheduled(_controller, env) {
+  const secret = env.CRON_SECRET;
+  // Never call the internal endpoint without a secret — it fails closed.
+  if (!secret) return;
+  try {
+    const response = await fetch(
+      new URL('/internal/process-pending', API_ORIGIN),
+      {
+        method: 'POST',
+        headers: { 'x-cron-secret': secret },
+        // Stay below the API Worker's edge timeout; a job that outlives this
+        // is left in SCORING and re-claimed after the stale threshold.
+        signal: AbortSignal.timeout(50_000),
+      },
+    );
+    if (!response.ok) {
+      console.error(`Cron scoring driver returned ${response.status}`);
+    }
+  } catch (error) {
+    console.error('Cron scoring driver unreachable', error);
+  }
+}

@@ -165,8 +165,8 @@ export default function ResultsIndexPage() {
                       <span>·</span>
                       <span>
                         {a.submittedAt
-                          ? `Submitted on ${new Date(a.submittedAt).toLocaleDateString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
-                          : `Started on ${new Date(a.startedAt).toLocaleDateString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}
+                          ? `Submitted on ${new Date(a.submittedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                          : `Started on ${new Date(a.startedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}
                       </span>
                     </div>
                   </div>

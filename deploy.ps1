@@ -8,7 +8,14 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 Set-Location $root
 
-Write-Host "== 1/4 Backend to Vercel ==" -ForegroundColor Cyan
+# The Cloudflare cron trigger drives durable AI scoring through the secured
+# /internal/process-pending route. Both sides MUST share this secret, and the
+# route is fail-closed when it is absent — without it, submissions stay SCORING.
+if (-not $env:CRON_SECRET) {
+  throw "Set CRON_SECRET before deploying (same value on Vercel and the web Worker)."
+}
+
+Write-Host "== 1/5 Backend to Vercel ==" -ForegroundColor Cyan
 Push-Location (Join-Path $root "backend")
 try {
   cmd /c "vercel --prod --yes > ..\.deploy\vercel-deploy.log 2>&1"
@@ -26,7 +33,7 @@ foreach ($i in 1..5) {
 if (-not $api) { throw "Vercel backend is not healthy yet - check .deploy\vercel-deploy.log" }
 Write-Host "   API URL: $api" -ForegroundColor Green
 
-Write-Host "== 2/4 API Worker repoint ==" -ForegroundColor Cyan
+Write-Host "== 2/5 API Worker repoint ==" -ForegroundColor Cyan
 $enc = New-Object System.Text.UTF8Encoding($false)
 $apiCfg = Join-Path $root "api-proxy\wrangler.jsonc"
 $cfgText = [IO.File]::ReadAllText($apiCfg)
@@ -39,15 +46,20 @@ try {
 } finally { Pop-Location }
 Write-Host "   API Worker redeployed" -ForegroundColor Green
 
-Write-Host "== 3/4 Frontend build (same-origin /api baked in) ==" -ForegroundColor Cyan
+Write-Host "== 3/5 Frontend build (same-origin /api baked in) ==" -ForegroundColor Cyan
 cmd /c "set NEXT_PUBLIC_API_URL=https://speakio-web.speakio.workers.dev/api&& npm run cf:build > .deploy\cfbuild.log 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "OpenNext build failed - see .deploy\cfbuild.log" }
 Write-Host "   build OK" -ForegroundColor Green
 
-Write-Host "== 4/4 Deploy to Cloudflare Workers ==" -ForegroundColor Cyan
+Write-Host "== 4/5 Deploy to Cloudflare Workers ==" -ForegroundColor Cyan
 cmd /c "npx wrangler deploy > .deploy\cfdeploy.log 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "wrangler deploy failed - see .deploy\cfdeploy.log" }
 Get-Content "$root\.deploy\cfdeploy.log" | Select-String "workers.dev|Deployed" | ForEach-Object { Write-Host "   $_" -ForegroundColor Green }
+
+Write-Host "== 5/5 Cloudflare cron secret ==" -ForegroundColor Cyan
+$env:CRON_SECRET | npx wrangler secret put CRON_SECRET
+if ($LASTEXITCODE -ne 0) { throw "Failed to set the CRON_SECRET Worker secret" }
+Write-Host "   Cron trigger can now drive durable scoring" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Verifying live endpoints..." -ForegroundColor Cyan

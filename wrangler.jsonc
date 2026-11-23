@@ -10,5 +10,10 @@
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": {
     "enabled": true
+  },
+  // Drives durable AI scoring. Vercel cannot run background work after the
+  // response, so this cron calls the secured /internal/process-pending route.
+  "triggers": {
+    "crons": ["*/2 * * * *"]
   }
 }

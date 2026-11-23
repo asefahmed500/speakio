@@ -27,14 +27,18 @@ created through registration, and the first ADMIN is bootstrapped with
 
 - **API**: NestJS on **Vercel** (`speakio-api` project, `backend/api/index.ts`,
   Node 24, `maxDuration: 60s`, 1024 MB) with Prisma cloud Postgres. Env vars
-  live in Vercel's encrypted store (`vercel env ls production`). Coach,
-  question-generation and paraphrase traffic routes to the fast
-  `@cf/meta/llama-3.3-70b` model so HTTP-awaited AI calls finish inside
-  Vercel's 60 s cap, while essay/speaking grading keeps the reasoning GLM
-  model and runs inline (`VERCEL` makes scoring await instead of
-  fire-and-forget — there is no background process on serverless).
-- **Frontend**: Cloudflare Workers (`speakio-web`, OpenNext) — the only
-  Cloudflare-hosted compute.
+  live in Vercel's encrypted store (`vercel env ls production`).
+- **Durable AI scoring**: Vercel freezes a function when its HTTP response is
+  sent, so the submit endpoints never await the AI pipeline. They persist the
+  attempt as `SCORING` and return immediately. A Cloudflare **Cron Trigger**
+  (`*/2 * * * *`, in `wrangler.jsonc`) calls the secret-protected
+  `POST /internal/process-pending` on the web Worker, which forwards to the
+  API. The driver atomically claims one pending attempt, awaits the real AI
+  scoring, and reports the true outcome; failures return to `SUBMITTED` for a
+  capped retry (3 failed agent runs), and jobs stalled >10 min are re-claimed.
+  **Both sides must share `CRON_SECRET`** (Vercel env var + `wrangler secret
+  put CRON_SECRET`); the internal route is fail-closed when it is unset.
+- **Frontend + cron**: Cloudflare Workers (`speakio-web`, OpenNext).
 - **API proxy**: Cloudflare Worker `speakio-api` reverse-proxies `/api/*`
   from the frontend host to `https://speakio-api.vercel.app` (stable origin —
   the ephemeral quick tunnel is retired). Auth cookies are set on the
@@ -73,13 +77,14 @@ in `lib/api-client.ts` still rotate normally.
 powershell -ExecutionPolicy Bypass -File .\deploy.ps1
 ```
 
+Set `CRON_SECRET` (at least 32 random bytes) in the shell before running.
 `deploy.ps1` performs, in order:
-1. Start/reuse the backend from `backend/dist` (health-checked).
-2. Start/reuse `cloudflared` tunnel and read the fresh `*.trycloudflare.com` URL.
-3. Update `api-proxy/wrangler.jsonc` `API_ORIGIN` and deploy `speakio-api`.
-4. Build the frontend with `NEXT_PUBLIC_API_URL=https://speakio-web.speakio.workers.dev/api` (`npm run cf:build`) and deploy `speakio-web` (entrypoint `web-worker-entry.js`).
+1. Deploy the backend to Vercel and health-check `https://speakio-api.vercel.app`.
+2. Repoint `api-proxy/wrangler.jsonc` `API_ORIGIN` to that stable origin and deploy `speakio-api`.
+3. Build the frontend with `NEXT_PUBLIC_API_URL=https://speakio-web.speakio.workers.dev/api` (`npm run cf:build`) and deploy `speakio-web` (entrypoint `web-worker-entry.js`, including the cron `scheduled` handler).
+4. Set the same `CRON_SECRET` as a Worker secret so the cron can drive durable scoring.
 
-Run it to ship backend or frontend changes. Nothing else needs manual wiring.
+There is no local process and no `cloudflared` tunnel in production.
 
 ## Manual commands
 
@@ -126,18 +131,18 @@ budget and retried past Cloudflare's 100 s edge timeout (524).
 - `CLOUDFLARE_ACCOUNT_ID` — the account ID (`1945c662…` for this project).
 
 CI builds and deploys **only the frontend Worker**. It deliberately does NOT
-deploy `speakio-api`: that Worker's `API_ORIGIN` is an ephemeral
-`trycloudflare.com` URL rewritten on the Windows host by
-`ops/api-watchdog.ps1`, so a CI deploy would bake a dead origin. Run
-`deploy.ps1` on the host after a reboot or tunnel change to update the origin
-and redeploy the API Worker. A fresh clone cannot deploy a working backend
-from CI alone — the NestJS process and tunnel still run on the host (Containers
-require the paid Cloudflare plan; Vercel Hobby caps serverless at 60 s).
+deploy `speakio-api`, whose `API_ORIGIN` is repointed by `deploy.ps1` to the
+stable Vercel origin. Run `deploy.ps1` to ship backend or proxy changes.
+`ops/api-watchdog.ps1` is verification-only now — it does not manage a tunnel.
+
+Vercel Hobby caps serverless functions at 60 s, which is why AI scoring is
+driven by the durable cron path described above rather than awaited in the
+submit request.
 
 ### Cloudflare database status
 
 The live database is now **Prisma cloud Postgres** (`db.prisma.io`), not local:
-`npx prisma migrate deploy` applied all 9 migrations and `npx prisma db seed`
+`npx prisma migrate deploy` applied all 11 migrations and `npx prisma db seed`
 loaded the test content. Hyperdrive `speakio-hyperdrive` is configured for
 Worker access. D1 `speakio-db` exists but remains unwired (SQLite vs Postgres).
 

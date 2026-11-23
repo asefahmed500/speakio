@@ -20,6 +20,16 @@ import { rawToBand, overallBandOf } from '../common/band.utils';
 import { AttemptStatus, Prisma, SkillType, Attempt } from '@prisma/client';
 
 const MAX_AUDIO_BASE64_BYTES = 6 * 1024 * 1024;
+/** Stop auto-retrying a persistently failing scoring job after this many attempts. */
+const MAX_SCORING_RETRIES = 3;
+
+type ScoringOutcome = {
+  attemptId: string;
+  status: AttemptStatus;
+  message: string;
+  /** Confirmed scored in awaited mode; accepted-for-background in submit mode. */
+  ok: boolean;
+};
 
 @Injectable()
 export class AttemptsService implements OnModuleInit {
@@ -373,7 +383,8 @@ export class AttemptsService implements OnModuleInit {
       partNumber: number;
     }>,
     answers: Record<string, string>,
-  ) {
+    waitForResult = false,
+  ): Promise<ScoringOutcome> {
     const essayQuestion =
       questions.find((q) => (answers[q.id] ?? '').trim().length > 0) ??
       questions[0];
@@ -396,12 +407,10 @@ export class AttemptsService implements OnModuleInit {
       data: { status: AttemptStatus.SCORING },
     });
 
-    // Run the AI pipeline in the background on long-lived hosts: under 10k
-    // concurrent users the HTTP request must never hold an LLM call open. The
-    // results page already polls while status is SCORING, and a background
-    // failure rolls the attempt back to SUBMITTED for the retry/rescore path.
-    // On serverless (Vercel) there is no process left after the response, so
-    // the pipeline runs inline there.
+    // The submit path returns immediately; the durable cron path passes
+    // waitForResult=true so it only reports success once the score is really
+    // persisted. Awaiting here on submit used to blow past Vercel's 60s cap.
+    let succeeded = false;
     const pipeline = this.writingAgent
       .scoreEssay({
         attemptId: attempt.id,
@@ -420,6 +429,7 @@ export class AttemptsService implements OnModuleInit {
             `Background certificate issuance failed for ${userId}: ${issueError instanceof Error ? issueError.message : issueError}`,
           );
         });
+        succeeded = true;
       })
       .catch(async (error: unknown) => {
         // A scored attempt (post-publish telemetry failure) must NEVER
@@ -434,19 +444,31 @@ export class AttemptsService implements OnModuleInit {
               scored === 0 ? AttemptStatus.SUBMITTED : AttemptStatus.COMPLETED,
           },
         });
+        succeeded = scored > 0;
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(
           `Background AI scoring failed for attempt ${attempt.id}: ${message}`,
         );
       });
 
-    if (process.env.VERCEL) await pipeline;
-
+    if (waitForResult) {
+      await pipeline;
+      return {
+        attemptId: attempt.id,
+        status: succeeded ? AttemptStatus.COMPLETED : AttemptStatus.SUBMITTED,
+        message: succeeded
+          ? 'Essay scored by AI review agents.'
+          : 'AI scoring failed — this attempt will be retried.',
+        ok: succeeded,
+      };
+    }
+    void pipeline; // long-lived hosts finish inline; serverless uses the cron
     return {
       attemptId: attempt.id,
       status: AttemptStatus.SCORING,
       message:
         'Your essay is being scored by AI review agents — your band appears on the results page automatically.',
+      ok: true,
     };
   }
 
@@ -460,7 +482,8 @@ export class AttemptsService implements OnModuleInit {
     attemptId: string,
     questions: Array<{ id: string; prompt: string; passage: string | null }>,
     answers: Record<string, string>,
-  ) {
+    waitForResult = false,
+  ): Promise<ScoringOutcome> {
     const firstQuestion = questions[0];
     // Every speaking prompt in the served set is answerable. Audio segments
     // from all questions are concatenated; typed answers are joined as lines.
@@ -517,12 +540,11 @@ export class AttemptsService implements OnModuleInit {
       data: { status: AttemptStatus.SCORING },
     });
 
-    // Background AI pipeline (see scoreWriting): the HTTP request returns
-    // immediately; the results page polls while SCORING. Content rejections
+    // Submit returns immediately; the durable cron awaits this pipeline so it
+    // only reports success once the score is persisted. Content rejections
     // roll back to IN_PROGRESS (re-recordable), infrastructure failures to
     // SUBMITTED (rescore path).
-    // On serverless (Vercel) there is no process left to run "background"
-    // work after the response — the pipeline must run inline.
+    let succeeded = false;
     const pipeline = this.speakingAgent
       .scoreRecording({
         attemptId,
@@ -539,6 +561,7 @@ export class AttemptsService implements OnModuleInit {
             `Background certificate issuance failed for ${userId}: ${issueError instanceof Error ? issueError.message : issueError}`,
           );
         });
+        succeeded = true;
       })
       .catch(async (error: unknown) => {
         const scored = await this.prisma.score.count({ where: { attemptId } });
@@ -554,19 +577,31 @@ export class AttemptsService implements OnModuleInit {
           where: { id: attemptId },
           data: { status: rollbackStatus },
         });
+        succeeded = scored > 0;
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(
           `Background AI speaking review failed for attempt ${attemptId}: ${message}`,
         );
       });
 
-    if (process.env.VERCEL) await pipeline;
-
+    if (waitForResult) {
+      await pipeline;
+      return {
+        attemptId,
+        status: succeeded ? AttemptStatus.COMPLETED : AttemptStatus.SUBMITTED,
+        message: succeeded
+          ? 'Recording reviewed by AI agents.'
+          : 'AI speaking review failed — this attempt will be retried.',
+        ok: succeeded,
+      };
+    }
+    void pipeline; // long-lived hosts finish inline; serverless uses the cron
     return {
       attemptId,
       status: AttemptStatus.SCORING,
       message:
         'Your recording is being transcribed and reviewed by AI agents — your band appears on the results page automatically.',
+      ok: true,
     };
   }
 
@@ -615,8 +650,27 @@ export class AttemptsService implements OnModuleInit {
         `Attempt is ${attempt.status}; only SUBMITTED, stuck SCORING, or score-less COMPLETED attempts can be re-scored`,
       );
     }
-    // Grade against the attempt's question snapshot — the exact set this user
-    // was served — never the whole (possibly larger) adaptive pool.
+    // Same grading path as the durable cron driver — no divergent logic.
+    return this.dispatchScoring(attempt, false);
+  }
+
+  /**
+   * Grade a submitted attempt from its persisted snapshot — the exact set the
+   * user was served, never the whole (possibly larger) adaptive pool.
+   * `waitForResult` is true only for the cron driver, which must not claim
+   * success until the AI score is actually persisted.
+   */
+  private async dispatchScoring(
+    attempt: {
+      id: string;
+      userId: string;
+      testSetId: string;
+      questionIdsJson: Prisma.JsonValue;
+      answersJson: Prisma.JsonValue;
+      testSet: { skill: SkillType };
+    },
+    waitForResult: boolean,
+  ): Promise<boolean> {
     const snapshotIds = Array.isArray(attempt.questionIdsJson)
       ? (attempt.questionIdsJson as string[])
       : null;
@@ -629,25 +683,114 @@ export class AttemptsService implements OnModuleInit {
     });
     const answers = (attempt.answersJson as Record<string, string>) ?? {};
     if (attempt.testSet.skill === SkillType.WRITING) {
-      return this.scoreWriting(userId, attempt, questions, answers);
+      const result = await this.scoreWriting(
+        attempt.userId,
+        attempt,
+        questions,
+        answers,
+        waitForResult,
+      );
+      return result.ok;
     }
     if (
       attempt.testSet.skill === SkillType.LISTENING ||
       attempt.testSet.skill === SkillType.READING
     ) {
-      return this.autoGrade(
-        attemptId,
+      await this.autoGrade(
+        attempt.id,
         attempt.testSet.skill,
         questions,
         answers,
       );
+      return true;
     }
     if (attempt.testSet.skill === SkillType.SPEAKING) {
-      return this.scoreSpeaking(userId, attemptId, questions, answers);
+      const result = await this.scoreSpeaking(
+        attempt.userId,
+        attempt.id,
+        questions,
+        answers,
+        waitForResult,
+      );
+      return result.ok;
     }
     throw new BadRequestException(
       'Full mock re-scoring is not supported yet. Please take the individual skill tests.',
     );
+  }
+
+  /**
+   * Durable scoring driver for serverless. The submit endpoint now returns
+   * immediately; this method is invoked by the secured cron endpoint because
+   * Vercel freezes a function once its HTTP response is sent.
+   *
+   * Each job is claimed with an atomic `updateMany` on its current status, so
+   * overlapping cron invocations can never drive the same attempt twice.
+   * Failed jobs return to SUBMITTED for a later retry. Scoring itself is
+   * idempotent (score.upsert), so a retry after a mid-flight kill is safe.
+   */
+  async processPendingScoring(limit = 1) {
+    const SUBMITTED_MIN_AGE_MS = 30_000; // let an in-flight local promise finish
+    const SCORING_STALE_MS = 10 * 60_000; // matches startup recovery threshold
+    const candidates = await this.prisma.attempt.findMany({
+      where: {
+        // Full mocks have no automated scoring path (see dispatchScoring);
+        // claiming them would loop forever. They stay recoverable via rescore.
+        testSet: { skill: { not: SkillType.FULL_MOCK } },
+        OR: [
+          {
+            status: AttemptStatus.SUBMITTED,
+            startedAt: { lt: new Date(Date.now() - SUBMITTED_MIN_AGE_MS) },
+          },
+          {
+            status: AttemptStatus.SCORING,
+            startedAt: { lt: new Date(Date.now() - SCORING_STALE_MS) },
+          },
+        ],
+      },
+      orderBy: { startedAt: 'asc' },
+      take: Math.min(Math.max(limit, 1), 5),
+      include: {
+        testSet: { select: { id: true, skill: true } },
+        // A job that keeps failing must not consume AI quota on every tick.
+        agentRuns: {
+          where: { status: 'FAILED' },
+          select: { id: true },
+        },
+      },
+    });
+
+    const processed: Array<{ attemptId: string; ok: boolean }> = [];
+    for (const candidate of candidates) {
+      if (candidate.agentRuns.length >= MAX_SCORING_RETRIES) {
+        // Leave it SUBMITTED for an explicit manual rescore — never loop forever.
+        this.logger.warn(
+          `Attempt ${candidate.id} exhausted ${MAX_SCORING_RETRIES} scoring retries; leaving for manual rescore`,
+        );
+        continue;
+      }
+      const claimed = await this.prisma.attempt.updateMany({
+        where: { id: candidate.id, status: candidate.status },
+        data: { status: AttemptStatus.SCORING },
+      });
+      if (claimed.count === 0) continue; // another invocation won the claim
+      try {
+        // Await the real AI outcome — reporting ok:true for a fire-and-forget
+        // promise would let a failed job look successful and never be retried.
+        const ok = await this.dispatchScoring(candidate, true);
+        processed.push({ attemptId: candidate.id, ok });
+      } catch (error) {
+        await this.prisma.attempt.updateMany({
+          where: { id: candidate.id, status: AttemptStatus.SCORING },
+          data: { status: AttemptStatus.SUBMITTED },
+        });
+        this.logger.error(
+          `Durable scoring failed for ${candidate.id}: ${error instanceof Error ? error.message : error}`,
+        );
+        processed.push({ attemptId: candidate.id, ok: false });
+      }
+    }
+    return { claimed: candidates.length, processed };
   }
 
   async listMine(userId: string) {
