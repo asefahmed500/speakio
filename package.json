@@ -17,7 +17,8 @@
     "test:backend:unit": "npm --prefix backend test",
     "test:db": "node ops/db-integrity-check.cjs",
     "test:load": "node ops/load-test.cjs",
-    "test:features": "node ops/feature-verification.cjs"
+    "test:features": "node ops/feature-verification.cjs",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -46,6 +47,7 @@
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.20.17",
+    "@playwright/test": "^1.65.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

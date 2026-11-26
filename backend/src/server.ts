@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import { json } from 'express';
 import { randomUUID } from 'crypto';
 import { AppModule } from './app.module';
+import { ThrottlerFilter } from './common/throttler-filter';
 
 /**
  * Builds the fully configured Express instance without binding a port.
@@ -24,6 +25,7 @@ export async function createServer(): Promise<AppInstance> {
   const expressApp = app.getHttpAdapter().getInstance() as AppInstance;
   expressApp.set('trust proxy', 1);
 
+  app.useGlobalFilters(new ThrottlerFilter());
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cookieParser());
 

@@ -10,6 +10,15 @@ function request(path: string, cookieHeader?: string): NextRequest {
 
 const follow = (res: NextResponse) => res.headers.get("location")
 
+/** The proxy only treats a JWT-shaped token with a live `exp` as fresh. */
+function freshAccessToken(): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")
+  const payload = Buffer.from(
+    JSON.stringify({ sub: "qa-user", role: "USER", exp: Math.floor(Date.now() / 1000) + 3600 })
+  ).toString("base64url")
+  return `${header}.${payload}.signature`
+}
+
 describe("proxy — optimistic role-based redirect gate", () => {
   it("redirects an anonymous visitor from a protected page to /login with next param", () => {
     const res = proxy(request("/dashboard"))
@@ -33,9 +42,14 @@ describe("proxy — optimistic role-based redirect gate", () => {
   })
 
   it("redirects authenticated users away from /login to /dashboard", () => {
-    const res = proxy(request("/login", "access_token=at"))
+    const res = proxy(request("/login", `access_token=${freshAccessToken()}`))
     expect(res.status).toBe(307)
     expect(follow(res)).toBe("http://localhost:3000/dashboard")
+  })
+
+  it("does not bounce an opaque/expired token away from /login", () => {
+    const res = proxy(request("/login", "access_token=at"))
+    expect(res.status).toBe(200)
   })
 
   it("does NOT bounce a refresh-only visitor away from /login", () => {
@@ -44,7 +58,7 @@ describe("proxy — optimistic role-based redirect gate", () => {
   })
 
   it("redirects authenticated users away from /register", () => {
-    const res = proxy(request("/register", "access_token=at"))
+    const res = proxy(request("/register", `access_token=${freshAccessToken()}`))
     expect(follow(res)).toBe("http://localhost:3000/dashboard")
   })
 

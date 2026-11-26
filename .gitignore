@@ -10,6 +10,9 @@
 
 # testing
 /coverage
+/qa-*.log
+/tests/reports/*
+!/tests/reports/QA_REPORT.md
 
 # next.js
 /.next/

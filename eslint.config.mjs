@@ -21,6 +21,8 @@ const eslintConfig = defineConfig([
     "backend/**",
     // Standalone Node verification scripts run outside the Next.js/TS stack.
     "ops/**",
+    // Generated Playwright evidence (HTML report bundles are minified JS).
+    "tests/reports/**",
   ]),
 ]);
 
